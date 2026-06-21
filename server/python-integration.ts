@@ -901,6 +901,19 @@ export async function classifyAndExtract(
         `[VLM-DIRECT] Using structured output from ${vlmResult.engine}`
     );
     invoiceFields = vlmResult.structured;
+  } else if (vlmResult.text && /^\s*[\[{]/.test(vlmResult.text.trim())) {
+    // The text is itself JSON (e.g. a vision model returned JSON that the
+    // service couldn't fully parse). Do NOT run the regex OCR parser on it —
+    // that scrapes `"name": "..."` out as a literal string and loses the rest.
+    // Try to JSON-parse it directly; only fall back to the regex parser if that
+    // fails too.
+    console.log(`[VLM-DIRECT] Text looks like JSON — parsing directly`);
+    try {
+      invoiceFields = JSON.parse(vlmResult.text);
+    } catch {
+      console.warn(`[VLM-DIRECT] Direct JSON parse failed — flagging for review`);
+      invoiceFields = { confidence: 0, _parse_error: "vlm returned unparseable JSON" };
+    }
   } else {
     console.log(`[VLM-DIRECT] Running vlm_invoice_parser on extracted text`);
     invoiceFields = await parseInvoiceWithVlmParser(vlmResult.text);

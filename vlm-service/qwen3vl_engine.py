@@ -53,9 +53,15 @@ log = logging.getLogger("qwen3vl_engine")
 # ── Config ────────────────────────────────────────────────────────────────────
 QWEN3VL_SERVICE_URL = os.getenv("QWEN3VL_SERVICE_URL", "http://qwen3vl:8600").rstrip("/")
 QWEN3VL_TIMEOUT     = float(os.getenv("QWEN3VL_TIMEOUT", "600"))
-QWEN3VL_MAX_TOKENS  = int(os.getenv("QWEN3VL_MAX_TOKENS", "768"))
+QWEN3VL_MAX_TOKENS  = int(os.getenv("QWEN3VL_MAX_TOKENS", "1536"))  # was 768 — multi-line-item invoices truncate below ~1500
 QWEN3VL_DPI         = int(os.getenv("QWEN3VL_DPI", "110"))
 QWEN3VL_TEMP        = float(os.getenv("QWEN3VL_TEMP", "0.1"))
+# Readiness wait: the GGUF takes minutes to load on CPU. While loading, the
+# sidecar answers /health and /v1/chat with 503. Instead of failing instantly,
+# wait up to QWEN3VL_READY_WAIT seconds (polling every QWEN3VL_READY_POLL) for
+# the model to finish loading before the first request and on a 503.
+QWEN3VL_READY_WAIT  = float(os.getenv("QWEN3VL_READY_WAIT", "600"))   # 10 min
+QWEN3VL_READY_POLL  = float(os.getenv("QWEN3VL_READY_POLL", "5"))     # 5 s
 
 # Serialize requests — protects against the KV-cache concurrency bug (#17200)
 # and keeps a single-slot CPU server from being hit in parallel.
@@ -146,7 +152,23 @@ Rules:
   a corporate suffix (EOOD/LTD/GMBH/AE/ΑΕ/PC/IKE/...), set recipient.name to the
   company line and put the person in contactPerson.
 - Amounts use a period decimal separator in the JSON (1234.56). Convert Greek
-  1.234,56 → 1234.56."""
+  1.234,56 → 1234.56.
+- LINE-ITEM AMOUNTS (read the table columns carefully — this is the #1 error):
+  * `totalPrice` MUST be the line's NET value AS PRINTED in the net-amount column
+    (Greek header: ΚΑΘΑΡΗ ΑΞΙΑ; English: NET / AMOUNT / LINE TOTAL). COPY that
+    printed number directly. Do NOT compute quantity × unitPrice yourself.
+  * Many Greek invoices have a DISCOUNT column (ΕΚΠΤ% / ΕΚΠΤΩΣΗ / DISCOUNT). When a
+    discount applies, quantity × unitPrice will NOT equal the net value — the
+    printed ΚΑΘΑΡΗ ΑΞΙΑ already has the discount applied. Always trust the printed
+    net-value column over any multiplication; put the discount % in `discount1`.
+  * `unitPrice` is the per-unit price column (ΤΙΜΗ / ΤΙΜΗ ΜΟΝΑΔΟΣ / UNIT PRICE) —
+    copy it as printed. It is NOT necessarily totalPrice ÷ quantity when a discount
+    exists.
+- SELF-CHECK BEFORE OUTPUT: the sum of all line `totalPrice` values should be close
+  to `totals.subtotal` (the printed ΚΑΘΑΡΗ ΑΞΙΑ total). If your line totals sum to
+  far more than the printed subtotal, you read the wrong column (likely unit price
+  or a pre-discount value) — re-read the ΚΑΘΑΡΗ ΑΞΙΑ column for each line and fix
+  them so they reconcile with the printed subtotal before returning."""
 
 
 def _pdf_to_png_b64(pdf_bytes: bytes, dpi: int, max_pages: int = 1) -> List[str]:
@@ -173,8 +195,84 @@ def _looks_like_garbage(text: str) -> bool:
     return False
 
 
+def _repair_truncated_json(s: str) -> Optional[Dict[str, Any]]:
+    """
+    Best-effort recovery of JSON that was cut off mid-output (e.g. the model hit
+    max_tokens). Strategy: trim back to the last complete key/value, drop any
+    dangling partial line-item, then close open brackets/braces. Returns a dict
+    or None. This salvages a usable invoice instead of discarding everything.
+    """
+    if not s:
+        return None
+    s = s.strip()
+    # Take from the first brace.
+    start = s.find("{")
+    if start == -1:
+        return None
+    s = s[start:]
+    # Walk and track structure; remember the last position where the document
+    # was syntactically "safe" to close (just after a complete value).
+    depth = 0
+    in_str = False
+    esc = False
+    last_safe = None
+    for i, ch in enumerate(s):
+        if esc:
+            esc = False
+            continue
+        if ch == "\\":
+            esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch in "{[":
+            depth += 1
+        elif ch in "}]":
+            depth -= 1
+        # A safe cut point is right after a closed value/element at depth>=1.
+        if ch in "}]\"," and not in_str:
+            last_safe = i
+    if last_safe is None:
+        return None
+    candidate = s[: last_safe + 1]
+    # Strip a trailing comma if we cut right after one.
+    candidate = re.sub(r",\s*$", "", candidate.strip())
+    # Close any still-open arrays/objects by counting unmatched openers.
+    opens = []
+    in_str = False
+    esc = False
+    for ch in candidate:
+        if esc:
+            esc = False
+            continue
+        if ch == "\\":
+            esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch in "{[":
+            opens.append(ch)
+        elif ch in "}]":
+            if opens:
+                opens.pop()
+    closers = "".join("}" if c == "{" else "]" for c in reversed(opens))
+    for attempt in (candidate + closers, candidate + closers + "}"):
+        try:
+            return json.loads(attempt)
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
 def _parse_json_output(text: str) -> Optional[Dict[str, Any]]:
-    """Extract JSON from the model's text (handles fences + leading prose)."""
+    """Extract JSON from the model's text (handles fences + leading prose +
+    truncation when the model hit the token cap)."""
     if not text:
         return None
     cleaned = re.sub(r"^```(?:json)?\s*", "", text.strip(), flags=re.IGNORECASE)
@@ -188,12 +286,21 @@ def _parse_json_output(text: str) -> Optional[Dict[str, Any]]:
         try:
             return json.loads(m.group())
         except json.JSONDecodeError:
-            return None
-    return None
+            pass
+    # Last resort: the output was cut off mid-JSON — repair and salvage.
+    repaired = _repair_truncated_json(cleaned)
+    if repaired:
+        log.warning("[Qwen3VL] recovered truncated JSON via repair")
+    return repaired
 
 
 def _post_chat(b64_png: str, max_tokens: int) -> str:
-    """Single OpenAI-compatible multimodal chat request to the llama-server sidecar."""
+    """Single OpenAI-compatible multimodal chat request to the llama-server sidecar.
+
+    The sidecar returns 503 while the GGUF model is still loading (minutes on
+    CPU). Rather than failing the invoice, wait for readiness and retry once the
+    model is up. A 503 is treated as "not ready yet", not a hard error.
+    """
     payload = {
         "messages": [
             {"role": "system", "content": _INVOICE_SYSTEM_PROMPT},
@@ -213,11 +320,25 @@ def _post_chat(b64_png: str, max_tokens: int) -> str:
         "stream": False,
     }
     url = f"{QWEN3VL_SERVICE_URL}/v1/chat/completions"
-    with httpx.Client(timeout=QWEN3VL_TIMEOUT) as client:
-        r = client.post(url, json=payload)
+
+    # Make sure the model has finished loading before we send the image.
+    wait_until_ready(QWEN3VL_READY_WAIT)
+
+    deadline = time.monotonic() + QWEN3VL_READY_WAIT
+    attempt = 0
+    while True:
+        attempt += 1
+        with httpx.Client(timeout=QWEN3VL_TIMEOUT) as client:
+            r = client.post(url, json=payload)
+        # 503 = model still loading / no slot yet → wait and retry, don't fail.
+        if r.status_code == 503 and time.monotonic() < deadline:
+            log.info(f"[Qwen3VL] sidecar 503 (loading), waiting {QWEN3VL_READY_POLL}s "
+                     f"(attempt {attempt})")
+            time.sleep(QWEN3VL_READY_POLL)
+            continue
         r.raise_for_status()
         data = r.json()
-    return (data.get("choices") or [{}])[0].get("message", {}).get("content", "") or ""
+        return (data.get("choices") or [{}])[0].get("message", {}).get("content", "") or ""
 
 
 def _try_reset_server() -> None:
@@ -238,6 +359,27 @@ def health() -> bool:
             return r.status_code == 200
     except Exception:
         return False
+
+
+def wait_until_ready(max_wait: float) -> bool:
+    """
+    Poll /health until the sidecar reports ready (200) or max_wait elapses.
+    While the GGUF loads on CPU (minutes), /health returns 503. Returns True if
+    ready, False on timeout. Never raises — callers can still attempt the request.
+    """
+    deadline = time.monotonic() + max_wait
+    waited = False
+    while time.monotonic() < deadline:
+        if health():
+            if waited:
+                log.info("[Qwen3VL] sidecar ready")
+            return True
+        waited = True
+        log.info(f"[Qwen3VL] waiting for sidecar to load model "
+                 f"(poll {QWEN3VL_READY_POLL}s)...")
+        time.sleep(QWEN3VL_READY_POLL)
+    log.warning(f"[Qwen3VL] sidecar not ready after {max_wait}s — attempting anyway")
+    return False
 
 
 def extract_invoice_from_pdf_bytes(

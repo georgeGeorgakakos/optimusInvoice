@@ -167,6 +167,51 @@ def _vat_hallucination_guard(data: Dict[str, Any]) -> list:
     return issues
 
 
+def _line_items_reconcile_guard(data: Dict[str, Any]) -> list:
+    """
+    Check that the sum of line-item totalPrice values reconciles with the printed
+    subtotal. A large mismatch usually means the vision model read the wrong table
+    column on a discount invoice (unit price or pre-discount value). Sets a flag so
+    the document is routed to review; does NOT silently alter the amounts.
+    """
+    issues: list = []
+    items = data.get("lineItems") or []
+    subtotal = data.get("subtotal")
+    if not items or subtotal is None:
+        return issues
+    try:
+        sub = float(subtotal)
+    except (TypeError, ValueError):
+        return issues
+    if sub <= 0:
+        return issues
+    line_sum = 0.0
+    counted = 0
+    for it in items:
+        tp = it.get("totalPrice")
+        if tp is None:
+            continue
+        try:
+            line_sum += float(tp)
+            counted += 1
+        except (TypeError, ValueError):
+            continue
+    if counted == 0:
+        return issues
+    # Tolerance: 2% or 1.00, whichever larger.
+    tol = max(1.0, abs(sub) * 0.02)
+    if abs(line_sum - sub) > tol:
+        data["_line_items_reconciled"] = False
+        data["needs_review"] = True
+        issues.append(
+            f"line totals Σ={round(line_sum, 2)} do not match subtotal {round(sub, 2)} "
+            f"(possible discount-column misread)"
+        )
+    else:
+        data["_line_items_reconciled"] = True
+    return issues
+
+
 def postprocess_vision_invoice(
         structured: Optional[Dict[str, Any]],
         reference_text: Optional[str] = None,
@@ -198,6 +243,12 @@ def postprocess_vision_invoice(
 
     # 3. deterministic VAT-hallucination guard (no source text needed)
     issues.extend(_vat_hallucination_guard(structured))
+
+    # 3.5 line-item reconciliation: Σ(line totalPrice) vs subtotal. On discount
+    # invoices the model often reads the pre-discount or unit-price column, so the
+    # line totals can be far larger than the printed subtotal. Flag it so the
+    # invoice is reviewed rather than trusted.
+    issues.extend(_line_items_reconcile_guard(structured))
 
     # 4. full cross-reference validation when we have the real invoice text
     if reference_text and _validate_extraction is not None:

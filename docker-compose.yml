@@ -106,7 +106,7 @@ services:
       QWEN_VL_SERVICE_URL: "http://qwen-vl:8400"
       GEMMA_VL_SERVICE_URL: "http://gemma-vl:8500"
       QWEN3VL_SERVICE_URL: "http://qwen3vl:8600"   # NEW — Qwen3-VL-8B GGUF llama-server sidecar
-      QWEN3VL_MAX_TOKENS: "512"   # was 768 default — caps output, trims decode time
+      #QWEN3VL_MAX_TOKENS: "512"   # was 768 default — caps output, trims decode time
       QWEN3VL_DPI: "90"           # was 110 default — fewer image tokens, faster vision
       # ── Model/cache paths inside container ────────────────────────────────
       HF_HOME: "/models"
@@ -300,7 +300,7 @@ services:
       --temp 0.2
       --top-k 20
       --top-p 0.8
-      -n 1024
+      -n 2048
     ports:
       - "8600:8600"
     networks:

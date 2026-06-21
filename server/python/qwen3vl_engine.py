@@ -53,7 +53,7 @@ log = logging.getLogger("qwen3vl_engine")
 # ── Config ────────────────────────────────────────────────────────────────────
 QWEN3VL_SERVICE_URL = os.getenv("QWEN3VL_SERVICE_URL", "http://qwen3vl:8600").rstrip("/")
 QWEN3VL_TIMEOUT     = float(os.getenv("QWEN3VL_TIMEOUT", "600"))
-QWEN3VL_MAX_TOKENS  = int(os.getenv("QWEN3VL_MAX_TOKENS", "768"))
+QWEN3VL_MAX_TOKENS  = int(os.getenv("QWEN3VL_MAX_TOKENS", "1536"))  # was 768 — multi-line-item invoices truncate below ~1500
 QWEN3VL_DPI         = int(os.getenv("QWEN3VL_DPI", "110"))
 QWEN3VL_TEMP        = float(os.getenv("QWEN3VL_TEMP", "0.1"))
 # Readiness wait: the GGUF takes minutes to load on CPU. While loading, the
@@ -152,7 +152,23 @@ Rules:
   a corporate suffix (EOOD/LTD/GMBH/AE/ΑΕ/PC/IKE/...), set recipient.name to the
   company line and put the person in contactPerson.
 - Amounts use a period decimal separator in the JSON (1234.56). Convert Greek
-  1.234,56 → 1234.56."""
+  1.234,56 → 1234.56.
+- LINE-ITEM AMOUNTS (read the table columns carefully — this is the #1 error):
+  * `totalPrice` MUST be the line's NET value AS PRINTED in the net-amount column
+    (Greek header: ΚΑΘΑΡΗ ΑΞΙΑ; English: NET / AMOUNT / LINE TOTAL). COPY that
+    printed number directly. Do NOT compute quantity × unitPrice yourself.
+  * Many Greek invoices have a DISCOUNT column (ΕΚΠΤ% / ΕΚΠΤΩΣΗ / DISCOUNT). When a
+    discount applies, quantity × unitPrice will NOT equal the net value — the
+    printed ΚΑΘΑΡΗ ΑΞΙΑ already has the discount applied. Always trust the printed
+    net-value column over any multiplication; put the discount % in `discount1`.
+  * `unitPrice` is the per-unit price column (ΤΙΜΗ / ΤΙΜΗ ΜΟΝΑΔΟΣ / UNIT PRICE) —
+    copy it as printed. It is NOT necessarily totalPrice ÷ quantity when a discount
+    exists.
+- SELF-CHECK BEFORE OUTPUT: the sum of all line `totalPrice` values should be close
+  to `totals.subtotal` (the printed ΚΑΘΑΡΗ ΑΞΙΑ total). If your line totals sum to
+  far more than the printed subtotal, you read the wrong column (likely unit price
+  or a pre-discount value) — re-read the ΚΑΘΑΡΗ ΑΞΙΑ column for each line and fix
+  them so they reconcile with the printed subtotal before returning."""
 
 
 def _pdf_to_png_b64(pdf_bytes: bytes, dpi: int, max_pages: int = 1) -> List[str]:
@@ -179,8 +195,84 @@ def _looks_like_garbage(text: str) -> bool:
     return False
 
 
+def _repair_truncated_json(s: str) -> Optional[Dict[str, Any]]:
+    """
+    Best-effort recovery of JSON that was cut off mid-output (e.g. the model hit
+    max_tokens). Strategy: trim back to the last complete key/value, drop any
+    dangling partial line-item, then close open brackets/braces. Returns a dict
+    or None. This salvages a usable invoice instead of discarding everything.
+    """
+    if not s:
+        return None
+    s = s.strip()
+    # Take from the first brace.
+    start = s.find("{")
+    if start == -1:
+        return None
+    s = s[start:]
+    # Walk and track structure; remember the last position where the document
+    # was syntactically "safe" to close (just after a complete value).
+    depth = 0
+    in_str = False
+    esc = False
+    last_safe = None
+    for i, ch in enumerate(s):
+        if esc:
+            esc = False
+            continue
+        if ch == "\\":
+            esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch in "{[":
+            depth += 1
+        elif ch in "}]":
+            depth -= 1
+        # A safe cut point is right after a closed value/element at depth>=1.
+        if ch in "}]\"," and not in_str:
+            last_safe = i
+    if last_safe is None:
+        return None
+    candidate = s[: last_safe + 1]
+    # Strip a trailing comma if we cut right after one.
+    candidate = re.sub(r",\s*$", "", candidate.strip())
+    # Close any still-open arrays/objects by counting unmatched openers.
+    opens = []
+    in_str = False
+    esc = False
+    for ch in candidate:
+        if esc:
+            esc = False
+            continue
+        if ch == "\\":
+            esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch in "{[":
+            opens.append(ch)
+        elif ch in "}]":
+            if opens:
+                opens.pop()
+    closers = "".join("}" if c == "{" else "]" for c in reversed(opens))
+    for attempt in (candidate + closers, candidate + closers + "}"):
+        try:
+            return json.loads(attempt)
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
 def _parse_json_output(text: str) -> Optional[Dict[str, Any]]:
-    """Extract JSON from the model's text (handles fences + leading prose)."""
+    """Extract JSON from the model's text (handles fences + leading prose +
+    truncation when the model hit the token cap)."""
     if not text:
         return None
     cleaned = re.sub(r"^```(?:json)?\s*", "", text.strip(), flags=re.IGNORECASE)
@@ -194,8 +286,12 @@ def _parse_json_output(text: str) -> Optional[Dict[str, Any]]:
         try:
             return json.loads(m.group())
         except json.JSONDecodeError:
-            return None
-    return None
+            pass
+    # Last resort: the output was cut off mid-JSON — repair and salvage.
+    repaired = _repair_truncated_json(cleaned)
+    if repaired:
+        log.warning("[Qwen3VL] recovered truncated JSON via repair")
+    return repaired
 
 
 def _post_chat(b64_png: str, max_tokens: int) -> str:
