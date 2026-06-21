@@ -56,6 +56,12 @@ QWEN3VL_TIMEOUT     = float(os.getenv("QWEN3VL_TIMEOUT", "600"))
 QWEN3VL_MAX_TOKENS  = int(os.getenv("QWEN3VL_MAX_TOKENS", "768"))
 QWEN3VL_DPI         = int(os.getenv("QWEN3VL_DPI", "110"))
 QWEN3VL_TEMP        = float(os.getenv("QWEN3VL_TEMP", "0.1"))
+# Readiness wait: the GGUF takes minutes to load on CPU. While loading, the
+# sidecar answers /health and /v1/chat with 503. Instead of failing instantly,
+# wait up to QWEN3VL_READY_WAIT seconds (polling every QWEN3VL_READY_POLL) for
+# the model to finish loading before the first request and on a 503.
+QWEN3VL_READY_WAIT  = float(os.getenv("QWEN3VL_READY_WAIT", "600"))   # 10 min
+QWEN3VL_READY_POLL  = float(os.getenv("QWEN3VL_READY_POLL", "5"))     # 5 s
 
 # Serialize requests — protects against the KV-cache concurrency bug (#17200)
 # and keeps a single-slot CPU server from being hit in parallel.
@@ -193,7 +199,12 @@ def _parse_json_output(text: str) -> Optional[Dict[str, Any]]:
 
 
 def _post_chat(b64_png: str, max_tokens: int) -> str:
-    """Single OpenAI-compatible multimodal chat request to the llama-server sidecar."""
+    """Single OpenAI-compatible multimodal chat request to the llama-server sidecar.
+
+    The sidecar returns 503 while the GGUF model is still loading (minutes on
+    CPU). Rather than failing the invoice, wait for readiness and retry once the
+    model is up. A 503 is treated as "not ready yet", not a hard error.
+    """
     payload = {
         "messages": [
             {"role": "system", "content": _INVOICE_SYSTEM_PROMPT},
@@ -213,11 +224,25 @@ def _post_chat(b64_png: str, max_tokens: int) -> str:
         "stream": False,
     }
     url = f"{QWEN3VL_SERVICE_URL}/v1/chat/completions"
-    with httpx.Client(timeout=QWEN3VL_TIMEOUT) as client:
-        r = client.post(url, json=payload)
+
+    # Make sure the model has finished loading before we send the image.
+    wait_until_ready(QWEN3VL_READY_WAIT)
+
+    deadline = time.monotonic() + QWEN3VL_READY_WAIT
+    attempt = 0
+    while True:
+        attempt += 1
+        with httpx.Client(timeout=QWEN3VL_TIMEOUT) as client:
+            r = client.post(url, json=payload)
+        # 503 = model still loading / no slot yet → wait and retry, don't fail.
+        if r.status_code == 503 and time.monotonic() < deadline:
+            log.info(f"[Qwen3VL] sidecar 503 (loading), waiting {QWEN3VL_READY_POLL}s "
+                     f"(attempt {attempt})")
+            time.sleep(QWEN3VL_READY_POLL)
+            continue
         r.raise_for_status()
         data = r.json()
-    return (data.get("choices") or [{}])[0].get("message", {}).get("content", "") or ""
+        return (data.get("choices") or [{}])[0].get("message", {}).get("content", "") or ""
 
 
 def _try_reset_server() -> None:
@@ -238,6 +263,27 @@ def health() -> bool:
             return r.status_code == 200
     except Exception:
         return False
+
+
+def wait_until_ready(max_wait: float) -> bool:
+    """
+    Poll /health until the sidecar reports ready (200) or max_wait elapses.
+    While the GGUF loads on CPU (minutes), /health returns 503. Returns True if
+    ready, False on timeout. Never raises — callers can still attempt the request.
+    """
+    deadline = time.monotonic() + max_wait
+    waited = False
+    while time.monotonic() < deadline:
+        if health():
+            if waited:
+                log.info("[Qwen3VL] sidecar ready")
+            return True
+        waited = True
+        log.info(f"[Qwen3VL] waiting for sidecar to load model "
+                 f"(poll {QWEN3VL_READY_POLL}s)...")
+        time.sleep(QWEN3VL_READY_POLL)
+    log.warning(f"[Qwen3VL] sidecar not ready after {max_wait}s — attempting anyway")
+    return False
 
 
 def extract_invoice_from_pdf_bytes(
