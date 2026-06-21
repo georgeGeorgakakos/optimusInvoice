@@ -204,6 +204,54 @@ export async function processInvoiceById(
         const { classification, extraction: extractionResult } =
             await classifyAndExtract(tempPath, engineToUse, useNativeText);
         const docType = classification.documentType;
+        const handling = classification.handling;
+
+        // ═══ Non-invoice / non-postable gate ═══
+        // Drive the decision off the classifier's `handling` directive:
+        //   flag_no_extract → recognised non-invoice (cheque, order, statement,
+        //                     unknown): do NOT extract, flag for review.
+        // This is what stopped a cheque's IBAN digits becoming a €7-trillion
+        // "total". `supported === false` is kept as a belt-and-braces fallback.
+        const isFlagNoExtract =
+            handling === "flag_no_extract" ||
+            classification.supported === false &&
+            handling !== "extract_review" &&
+            handling !== "extract_no_post";
+
+        if (isFlagNoExtract || docType === "cheque" || docType === "unknown") {
+            const reason =
+                classification.reason ||
+                `Document classified as '${docType}', which is not a supported invoice type.`;
+            console.warn(`[ML] Non-invoice document (invoiceId=${invoiceId}): ${reason}`);
+            // Persist the REAL type. updateInvoiceDocumentType maps any value the
+            // DB enum can't store down to a safe placeholder, so this never throws
+            // (see invoiceDb). The precise type still rides in extractedData below.
+            try { await updateInvoiceDocumentType(invoiceId, docType); } catch {}
+            await report(`Needs review: ${reason}`);
+            await updateInvoiceStatus(invoiceId, "review_needed");
+            try {
+                const { createNotification } = await import("./invoiceDb");
+                await createNotification(
+                    userId,
+                    "review",
+                    `Document #${invoiceId} needs review`,
+                    reason,
+                    invoiceId
+                );
+            } catch {}
+            return {
+                success: false,
+                documentType: docType,
+                finalStatus: "review_needed",
+                extractedData: {
+                    reason,
+                    documentType: docType,
+                    handling,
+                    supported: classification.supported,
+                    scores: classification.scores,
+                },
+            };
+        }
 
         console.log(
             "[ML] Extraction result:",

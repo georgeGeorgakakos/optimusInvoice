@@ -725,10 +725,16 @@ export default function InvoiceDetail() {
 
   // Document type styling
   const docTypeLabels: Record<string, { label: string; color: string; bg: string }> = {
-    invoice:       { label: lang === "el" ? "Τιμολόγιο"        : "Invoice",      color: "text-blue-700",    bg: "bg-blue-50 border-blue-200" },
-    credit_note:   { label: lang === "el" ? "Πιστωτικό"         : "Credit Note", color: "text-purple-700",  bg: "bg-purple-50 border-purple-200" },
-    cmr:           { label: "CMR",                                              color: "text-orange-700",  bg: "bg-orange-50 border-orange-200" },
-    dispatch_note: { label: lang === "el" ? "Δελτίο Αποστολής"  : "Dispatch",    color: "text-emerald-700", bg: "bg-emerald-50 border-emerald-200" },
+    invoice:       { label: lang === "el" ? "Τιμολόγιο"        : "Invoice",          color: "text-blue-700",    bg: "bg-blue-50 border-blue-200" },
+    credit_note:   { label: lang === "el" ? "Πιστωτικό"         : "Credit Note",      color: "text-purple-700",  bg: "bg-purple-50 border-purple-200" },
+    cmr:           { label: "CMR",                                                   color: "text-orange-700",  bg: "bg-orange-50 border-orange-200" },
+    dispatch_note: { label: lang === "el" ? "Δελτίο Αποστολής"  : "Dispatch",         color: "text-emerald-700", bg: "bg-emerald-50 border-emerald-200" },
+    proforma:      { label: lang === "el" ? "Προτιμολόγιο"      : "Proforma",         color: "text-amber-700",   bg: "bg-amber-50 border-amber-200" },
+    receipt:       { label: lang === "el" ? "Απόδειξη"          : "Receipt",          color: "text-teal-700",    bg: "bg-teal-50 border-teal-200" },
+    order:         { label: lang === "el" ? "Παραγγελία"        : "Purchase Order",   color: "text-indigo-700",  bg: "bg-indigo-50 border-indigo-200" },
+    statement:     { label: lang === "el" ? "Κατάσταση Λογ/σμού": "Statement",        color: "text-cyan-700",    bg: "bg-cyan-50 border-cyan-200" },
+    cheque:        { label: lang === "el" ? "Επιταγή"           : "Cheque",           color: "text-rose-700",    bg: "bg-rose-50 border-rose-200" },
+    unknown:       { label: lang === "el" ? "Άγνωστο"           : "Unknown",          color: "text-slate-600",   bg: "bg-slate-100 border-slate-200" },
   };
   const dtLabel = docTypeLabels[docType] || docTypeLabels.invoice;
 

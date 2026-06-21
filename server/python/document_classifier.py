@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 """
 Document Type Classifier
-Analyzes PDF text to detect: invoice, credit_note, cmr, dispatch_note
+Analyzes PDF text to detect: invoice, credit_note, cmr, dispatch_note, cheque
 
 Special handling for Greek combined documents:
   "Τιμολόγιο Πώλησης - Δελτίο Αποστολής" = invoice (NOT dispatch_note)
+
+Non-invoice safety:
+  Bank cheques (ΕΠΙΤΑΓΗ / CHEQUE) and documents with no invoice signal at all
+  are classified as "cheque" or "unknown" with low confidence — NOT silently
+  defaulted to "invoice". This prevents the downstream invoice extractor from
+  forcing invoice fields onto a non-invoice (e.g. reading an IBAN as a total).
 """
 
 import sys
@@ -21,6 +27,11 @@ def classify_document(text: str) -> dict:
         "credit_note": 0,
         "cmr": 0,
         "dispatch_note": 0,
+        "cheque": 0,
+        "proforma": 0,
+        "receipt": 0,
+        "order": 0,
+        "statement": 0,
     }
 
     # ══════════════════════════════════════════════════════════════
@@ -53,6 +64,36 @@ def classify_document(text: str) -> dict:
             scores["invoice"] += 25
         elif has_timologio and has_polisi:
             scores["invoice"] += 20
+
+    # ══════════════════════════════════════════════════════════════
+    # STEP 0.5: Bank cheque detection (NON-INVOICE)
+    # A cheque (ΕΠΙΤΑΓΗ / CHEQUE) is not a supplier invoice. If we don't
+    # catch it, it falls through, scores 0 on every invoice keyword, and
+    # gets defaulted to "invoice" — then the invoice extractor reads the
+    # IBAN/account number as a total. Detect it explicitly.
+    # ══════════════════════════════════════════════════════════════
+    cheque_keywords = [
+        (r"ΑΡΙΘΜΟΣ\s*ΕΠΙΤΑΓΗΣ",            12),  # "cheque number"
+        (r"CHEQUE\s*N[O0]",                 12),
+        (r"ΕΠΙΤΑΓΗ",                         8),
+        (r"ΠΛΗΡΩΣΤΕ\s*ΜΕ\s*ΤΗΝ\s*ΕΠΙΤΑΓΗ",  10),  # "pay with this cheque"
+        (r"ΠΛΗΡΩΣΤΕ\s*.{0,20}\s*ΣΕ\s*ΔΙΑΤΑΓΗ",8),  # "pay to the order of"
+        (r"PAY\s*AGAINST\s*THIS\s*CHEQUE",  10),
+        (r"ΜΕ\s*ΧΡΕΩΣΗ\s*ΤΟΥ\s*ΛΟΓΑΡΙΑΣΜΟΥ", 6),  # "debit my account"
+        (r"ALPHA\s*BANK|ΕΘΝΙΚΗ\s*ΤΡΑΠΕΖΑ|ΠΕΙΡΑΙΩΣ|EUROBANK", 4),  # bank names (weak)
+        (r"ΤΟΠΟΣ\s*/\s*PLACE",              4),  # cheque place/date header
+        (r"ΛΕΥΚΗ\s*ΖΩΝΗ|DO\s*NOT\s*MARK",   5),  # MICR white-band warning
+    ]
+    for pattern, weight in cheque_keywords:
+        if re.search(pattern, text_upper):
+            scores["cheque"] += weight
+
+    # Strong cheque signal: the magic-ink MICR line is unique to cheques.
+    # Format: <GR.. account ..> and a +chequeNumber+ marker at the bottom.
+    if re.search(r"<\s*GR\d", text_upper) or re.search(r"\+\s*\d{6,}\s*\+", text):
+        scores["cheque"] += 10
+
+    has_strong_cheque = scores["cheque"] >= 18
 
     # ── Invoice / ΤΠΥ ──
     invoice_keywords = [
@@ -149,6 +190,67 @@ def classify_document(text: str) -> dict:
             scores["dispatch_note"] += weight
 
     # ══════════════════════════════════════════════════════════════
+    # Additional NON-POSTING / NON-INVOICE types
+    # ══════════════════════════════════════════════════════════════
+
+    # Proforma (Προτιμολόγιο / PROFORMA) — looks like an invoice (contains
+    # ΤΙΜΟΛΟΓΙΟ) but is NOT a real tax document and must NOT post to the ERP.
+    # Weighted high so it overrides the plain-invoice signal it also carries.
+    proforma_keywords = [
+        (r"ΠΡΟΤΙΜΟΛΟΓΙ[ΟA]", 20),
+        (r"PROFORMA", 20),
+        (r"PRO\s*-?\s*FORMA", 18),
+        (r"ΠΡΟΣΩΡΙΝΟ\s*ΤΙΜΟΛΟΓΙΟ", 16),
+    ]
+    for pattern, weight in proforma_keywords:
+        if re.search(pattern, text_upper):
+            scores["proforma"] += weight
+
+    # Receipt (Απόδειξη Λιανικής / Παροχής Υπηρεσιών / RECEIPT)
+    receipt_keywords = [
+        (r"ΑΠΟΔΕΙΞΗ\s*ΛΙΑΝΙΚ", 14),
+        (r"ΑΠΟΔΕΙΞΗ\s*ΠΑΡΟΧΗΣ\s*ΥΠΗΡΕΣΙΩΝ", 14),
+        (r"ΑΠΟΔΕΙΞΗ\s*ΕΙΣΠΡΑΞ", 12),  # receipt of payment
+        (r"ΑΠΟΔΕΙΞΗ", 8),
+        (r"\bRECEIPT\b", 10),
+        (r"ΤΑΜΕΙΑΚΗ\s*ΑΠΟΔΕΙΞΗ", 12),  # cash-register receipt
+    ]
+    for pattern, weight in receipt_keywords:
+        if re.search(pattern, text_upper):
+            scores["receipt"] += weight
+
+    # Purchase order (Παραγγελία / Δελτίο Παραγγελίας / PURCHASE ORDER)
+    order_keywords = [
+        (r"ΔΕΛΤΙΟ\s*ΠΑΡΑΓΓΕΛΙΑΣ", 14),
+        (r"ΠΑΡΑΓΓΕΛΙΑ", 8),
+        (r"PURCHASE\s*ORDER", 14),
+        (r"\bORDER\s*FORM\b", 10),
+        (r"\bP\.?O\.?\s*N[O0]", 8),
+    ]
+    for pattern, weight in order_keywords:
+        if re.search(pattern, text_upper):
+            scores["order"] += weight
+
+    # Account statement (Κατάσταση Λογαριασμού / Καρτέλα Πελάτη / STATEMENT)
+    statement_keywords = [
+        (r"ΚΑΤΑΣΤΑΣΗ\s*ΛΟΓΑΡΙΑΣΜΟΥ", 14),
+        (r"ΚΑΡΤΕΛΑ\s*ΠΕΛΑΤΗ", 14),
+        (r"ΚΑΡΤΕΛΑ\s*ΠΡΟΜΗΘΕΥΤΗ", 14),
+        (r"ΕΚΚΑΘΑΡΙΣΤΙΚΟ", 10),
+        (r"ACCOUNT\s*STATEMENT", 14),
+        (r"\bSTATEMENT\s*OF\s*ACCOUNT\b", 14),
+        (r"ΥΠΟΛΟΙΠΟ\s*ΜΕΤΑΦΟΡΑΣ", 8),  # balance carried forward
+    ]
+    for pattern, weight in statement_keywords:
+        if re.search(pattern, text_upper):
+            scores["statement"] += weight
+
+    has_strong_proforma  = scores["proforma"]  >= 16
+    has_strong_receipt   = scores["receipt"]   >= 12
+    has_strong_order     = scores["order"]     >= 12
+    has_strong_statement = scores["statement"] >= 12
+
+    # ══════════════════════════════════════════════════════════════
     # NEGATIVE SIGNALS — reduce false positives
     # ══════════════════════════════════════════════════════════════
 
@@ -161,11 +263,28 @@ def classify_document(text: str) -> dict:
         scores["dispatch_note"] += 5
 
     # ══════════════════════════════════════════════════════════════
-    # RESOLUTION RULES
+    # RESOLUTION RULES  (order matters — most specific / safety-critical first)
     # ══════════════════════════════════════════════════════════════
 
+    # Rule -1: PROFORMA wins over invoice. A proforma contains ΤΙΜΟΛΟΓΙΟ so it
+    # also scores as invoice — but it must NEVER be treated as a real invoice
+    # (no tax obligation, must not post to ERP). Highest priority.
+    if has_strong_proforma:
+        doc_type = "proforma"
+    # Rule 0: Strong cheque signal AND no real invoice signal → cheque.
+    elif has_strong_cheque and scores["cheque"] >= scores["invoice"]:
+        doc_type = "cheque"
+    # Rule 0b: Statement / order / receipt when they clearly dominate invoice.
+    # These can carry stray invoice-like words, so require them to out-score
+    # the invoice signal before winning.
+    elif has_strong_statement and scores["statement"] >= scores["invoice"]:
+        doc_type = "statement"
+    elif has_strong_order and scores["order"] >= scores["invoice"]:
+        doc_type = "order"
+    elif has_strong_receipt and scores["receipt"] >= scores["invoice"]:
+        doc_type = "receipt"
     # Rule 1: Combined document — always invoice
-    if is_combined:
+    elif is_combined:
         doc_type = "invoice"
     # Rule 2: Credit note overrides invoice
     elif scores["credit_note"] >= 10 and scores["credit_note"] >= scores["invoice"]:
@@ -181,16 +300,38 @@ def classify_document(text: str) -> dict:
     else:
         doc_type = max(scores, key=scores.get)
 
-    # Default to invoice if no clear signal
+    # Final safety net: if the winning type scored nothing, DON'T default to
+    # invoice (the old behaviour that turned cheques into €7-trillion invoices).
     if scores[doc_type] == 0:
-        doc_type = "invoice"
+        doc_type = "cheque" if scores["cheque"] > 0 else "unknown"
 
-    confidence = min(100, scores[doc_type] * 5)
+    confidence = min(100, scores[doc_type] * 5) if doc_type in scores else 0
+
+    # ── supported / handling decision ─────────────────────────────────────────
+    # supported = True   → run invoice extraction + may post to ERP
+    # supported = False  → recognised, but NOT a postable invoice → flag for review
+    POSTABLE_TYPES = {"invoice", "credit_note"}
+    supported = doc_type in POSTABLE_TYPES
+    HANDLING = {
+        "invoice":       "extract_and_post",
+        "credit_note":   "extract_and_post",
+        "cmr":           "extract_review",
+        "dispatch_note": "extract_review",
+        "receipt":       "extract_review",
+        "proforma":      "extract_no_post",
+        "order":         "flag_no_extract",
+        "statement":     "flag_no_extract",
+        "cheque":        "flag_no_extract",
+        "unknown":       "flag_no_extract",
+    }
+    handling = HANDLING.get(doc_type, "flag_no_extract")
 
     return {
         "documentType": doc_type,
         "confidence": confidence,
         "scores": scores,
+        "supported": supported,
+        "handling": handling,
     }
 
 
@@ -206,7 +347,7 @@ def classify_from_pdf(pdf_path: str, ocr_text_file: str = None) -> dict:
 
         if not text or len(text.strip()) < 20:
             return {
-                "documentType": "invoice",
+                "documentType": "unknown",
                 "confidence": 0,
                 "error": f"No text extracted (method: {extraction['method']})",
             }
@@ -217,7 +358,7 @@ def classify_from_pdf(pdf_path: str, ocr_text_file: str = None) -> dict:
         return result
     except Exception as e:
         return {
-            "documentType": "invoice",
+            "documentType": "unknown",
             "confidence": 0,
             "error": str(e),
         }

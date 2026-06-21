@@ -145,6 +145,15 @@ export async function deleteInvoiceById(id: number) {
     await db.delete(invoices).where(eq(invoices.id, id));
 }
 
+// The DB `documentType` column is a MySQL enum limited to these values.
+// Any richer classifier type (proforma, receipt, cheque, order, statement,
+// unknown, ...) is mapped to a safe placeholder so the write never throws.
+// The precise type is still preserved in the invoice's extractedData JSON
+// (and shown in the UI), so no information is lost.
+const DB_ENUM_DOC_TYPES = new Set([
+    "invoice", "credit_note", "cmr", "dispatch_note",
+]);
+
 export async function updateInvoiceDocumentType(
     id: number,
     documentType: string
@@ -152,9 +161,14 @@ export async function updateInvoiceDocumentType(
     const db = await getDb();
     if (!db) return;
 
+    // Map non-enum types down to a storable value. Credit-note-like stays as-is;
+    // everything non-postable collapses to "invoice" at the column level but is
+    // flagged review_needed elsewhere, so it never auto-posts.
+    const safeType = DB_ENUM_DOC_TYPES.has(documentType) ? documentType : "invoice";
+
     await db
         .update(invoices)
-        .set({ documentType: documentType as any })
+        .set({ documentType: safeType as any })
         .where(eq(invoices.id, id));
 }
 
@@ -1425,7 +1439,7 @@ export async function claimNextQueuedInvoice(): Promise<{ id: number; userId: nu
             FROM invoices
             WHERE status = 'queued'
             ORDER BY priority ASC, queuedAt ASC
-            LIMIT 1
+                LIMIT 1
             FOR UPDATE SKIP LOCKED
         `);
 

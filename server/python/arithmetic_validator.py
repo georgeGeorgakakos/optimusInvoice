@@ -215,6 +215,18 @@ def validate_invoice(
         if not _close(sum_net, total, abs_tol=0.05, rel_tol=0.05):
             totals_ok = False
 
+    # ── magnitude sanity check ───────────────────────────────────────────────
+    # Catches catastrophic extraction errors where an IBAN, account number, or
+    # other long digit string was read as a monetary amount (e.g. a cheque's
+    # account number 7002320000959 becoming the "total"). A real supplier
+    # invoice total is essentially never above this ceiling; if it is, the value
+    # is almost certainly a misread identifier, so force review.
+    ABSURD_AMOUNT = 1_000_000_000.0   # 1 billion — far above any real invoice
+    for label, val in (("total", total), ("subtotal", subtotal), ("vat", vat)):
+        if val is not None and abs(val) >= ABSURD_AMOUNT:
+            totals_ok = False
+            issues.append(f"absurd {label} {val} — likely a misread IBAN/account number")
+
     # ── confidence blend ─────────────────────────────────────────────────────
     #   60% line consistency, 30% totals reconciliation, 10% completeness
     completeness = sum(

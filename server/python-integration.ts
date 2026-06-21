@@ -111,7 +111,19 @@ async function executePythonScript(
   const pythonCmd = await resolvePythonCommand();
 
   return new Promise((resolve, reject) => {
-    const pythonProcess = spawn(pythonCmd, [scriptPath, ...args], {
+    // Node's spawn() rejects ANY argument containing a NUL byte (\x00) with
+    // ERR_INVALID_ARG_VALUE. pdfplumber can emit NUL bytes inside extracted text
+    // (e.g. date ranges like "Apr 30\x00May 31" from certain PDF encodings), which
+    // then crash product matching / any Python call that passes that text as an arg.
+    // NUL bytes carry no meaning here, so strip them (and other C0 control chars
+    // except tab/newline/carriage-return) from every argument before spawning.
+    // This protects ALL executePythonScript callers, not just matchProduct.
+    const safeArgs = args.map((a) =>
+        typeof a === "string"
+            ? a.replace(/\u0000/g, "").replace(/[\x01-\x08\x0B\x0C\x0E-\x1F]/g, "")
+            : a
+    );
+    const pythonProcess = spawn(pythonCmd, [scriptPath, ...safeArgs], {
       cwd: PYTHON_DIR,
       env: {
         ...process.env,
@@ -540,9 +552,12 @@ export async function extractInvoiceFromPDF(
  * Classify document type from PDF content
  */
 export interface ClassificationResult {
-  documentType: "invoice" | "credit_note" | "cmr" | "dispatch_note";
+  documentType: "invoice" | "credit_note" | "cmr" | "dispatch_note" | "cheque" | "proforma" | "receipt" | "order" | "statement" | "unknown";
   confidence: number;
   scores?: Record<string, number>;
+  supported?: boolean;   // false → not a postable invoice; skip ERP posting, flag for review
+  handling?: "extract_and_post" | "extract_review" | "extract_no_post" | "flag_no_extract";
+  reason?: string;
   error?: string;
 }
 
@@ -565,12 +580,18 @@ export async function classifyDocument(
       documentType: result.documentType || "invoice",
       confidence: result.confidence || 0,
       scores: result.scores,
+      // supported defaults to true unless the classifier explicitly said false.
+      // This gates ERP posting; the handling field drives extract-vs-flag.
+      supported: result.supported !== false,
+      handling: result.handling,
+      reason: result.reason,
     };
   } catch (error) {
     console.error("Document classification failed:", error);
     return {
       documentType: "invoice",
       confidence: 0,
+      supported: true,
       error: error instanceof Error ? error.message : "Unknown error",
     };
   }
@@ -686,12 +707,57 @@ function detectDocumentType(
     text: string
 ): ClassificationResult["documentType"] {
   const t = text.toUpperCase();
+  // Proforma first — it contains ΤΙΜΟΛΟΓΙΟ but is NOT a postable invoice.
+  if (/ΠΡΟΤΙΜΟΛΟΓΙ[ΟΑ]|PROFORMA|PRO\s*-?\s*FORMA/.test(t)) return "proforma";
+  // Cheque — a cheque is NOT an invoice and must not be extracted as one.
+  if (/ΑΡΙΘΜΟΣ\s*ΕΠΙΤΑΓΗΣ|CHEQUE\s*N[O0]|ΠΛΗΡΩΣΤΕ\s*ΜΕ\s*ΤΗΝ\s*ΕΠΙΤΑΓΗ|ΜΕ\s*ΧΡΕΩΣΗ\s*ΤΟΥ\s*ΛΟΓΑΡΙΑΣΜΟΥ/.test(t))
+    return "cheque";
   if (/\bCREDIT\s+NOTE\b|\bΠΙΣΤΩΤΙΚΟ\b/.test(t)) return "credit_note";
+  if (/ΑΠΟΔΕΙΞΗ\s*ΛΙΑΝΙΚ|ΤΑΜΕΙΑΚΗ\s*ΑΠΟΔΕΙΞΗ|\bRECEIPT\b/.test(t)) return "receipt";
+  if (/ΔΕΛΤΙΟ\s*ΠΑΡΑΓΓΕΛΙΑΣ|PURCHASE\s*ORDER/.test(t)) return "order";
+  if (/ΚΑΡΤΕΛΑ\s*ΠΕΛΑΤΗ|ΚΑΤΑΣΤΑΣΗ\s*ΛΟΓΑΡΙΑΣΜΟΥ|ACCOUNT\s*STATEMENT/.test(t)) return "statement";
   if (/\bCMR\b|\bCONSIGNMENT\b/.test(t)) return "cmr";
   if (/\bDELIVERY\s+NOTE\b|\bΔΕΛΤΙΟ\s+ΑΠΟΣΤΟΛΗΣ\b/.test(t))
     return "dispatch_note";
   return "invoice";
 }
+
+/**
+ * Single source of truth for how each document type is handled.
+ *  - postable: may post to ERP (invoice, credit_note)
+ *  - handling: extract_and_post | extract_review | extract_no_post | flag_no_extract
+ * Keep in sync with HANDLING in document_classifier.py.
+ */
+const DOC_HANDLING: Record<string, ClassificationResult["handling"]> = {
+  invoice:       "extract_and_post",
+  credit_note:   "extract_and_post",
+  cmr:           "extract_review",
+  dispatch_note: "extract_review",
+  receipt:       "extract_review",
+  proforma:      "extract_no_post",
+  order:         "flag_no_extract",
+  statement:     "flag_no_extract",
+  cheque:        "flag_no_extract",
+  unknown:       "flag_no_extract",
+};
+
+function deriveHandling(docType: string): {
+  handling: ClassificationResult["handling"];
+  supported: boolean;
+} {
+  const handling = DOC_HANDLING[docType] ?? "flag_no_extract";
+  const supported = docType === "invoice" || docType === "credit_note";
+  return { handling, supported };
+}
+
+const DOC_TYPE_REASON: Record<string, string> = {
+  cheque:    "Document classified as a bank cheque, not an invoice.",
+  proforma:  "Document classified as a proforma — not a tax document, will not be posted.",
+  receipt:   "Document classified as a receipt — review before posting.",
+  order:     "Document classified as a purchase order, not an invoice.",
+  statement: "Document classified as an account statement, not an invoice.",
+  unknown:   "Document type could not be recognised — manual review needed.",
+};
 
 /**
  * Resolve the currency for an extracted invoice.
@@ -841,9 +907,14 @@ export async function classifyAndExtract(
   }
 
   // ── 4. Build ClassificationResult ────────────────────────────────────────
+  const _vlmDocType = detectDocumentType(vlmResult.text);
+  const _vlmDerived = deriveHandling(_vlmDocType);
   const classification: ClassificationResult = {
-    documentType: detectDocumentType(vlmResult.text),
+    documentType: _vlmDocType,
     confidence: invoiceFields.confidence ?? 70,
+    supported: _vlmDerived.supported,
+    handling: _vlmDerived.handling,
+    reason: DOC_TYPE_REASON[_vlmDocType],
   };
 
   console.log(
