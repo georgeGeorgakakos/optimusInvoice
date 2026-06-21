@@ -1,0 +1,105 @@
+{
+  "_README": "Ground truth for VLM benchmark. Keys = PDF filename without extension. Fill in the fields you want to compare.",
+
+  "FOURNARAKIS_TDA-01-138703": {
+    "documentType": "invoice",
+    "invoiceNumber": "ΤΔΑ-01-138703",
+    "date": "09/01/2026",
+    "supplier": {
+      "name": "ΦΟΥΡΝΑΡΑΚΗΣ",
+      "taxId": null,
+      "address": null
+    },
+    "buyer": {
+      "name": null,
+      "taxId": null
+    },
+    "totalNetValue": null,
+    "totalVat": null,
+    "totalAmount": null,
+    "vatRate": "24",
+    "currency": "EUR",
+    "lineItems": [
+      {
+        "supplierCode": "002450120",
+        "description": "PRODUCT DESCRIPTION 1",
+        "quantity": "1",
+        "unit": "TEM",
+        "unitPrice": null,
+        "netAmount": null,
+        "vatRate": "24"
+      },
+      {
+        "supplierCode": "205040120",
+        "description": "PRODUCT DESCRIPTION 2",
+        "quantity": "1",
+        "unit": "TEM",
+        "unitPrice": null,
+        "netAmount": null,
+        "vatRate": "24"
+      }
+    ]
+  },
+
+  "VECTOR_BRANDS_TIM0000166": {
+    "documentType": "invoice",
+    "invoiceNumber": "ΤΙΜ0000166",
+    "date": "09/01/2026",
+    "supplier": {
+      "name": "VECTOR BRANDS",
+      "taxId": null,
+      "address": null
+    },
+    "totalNetValue": null,
+    "totalVat": null,
+    "totalAmount": null,
+    "vatRate": "24",
+    "currency": "EUR",
+    "lineItems": [
+      {
+        "supplierCode": "002450120",
+        "description": null,
+        "quantity": null,
+        "unitPrice": null,
+        "netAmount": null
+      },
+      {
+        "supplierCode": "205040120",
+        "description": null,
+        "quantity": null,
+        "unitPrice": null,
+        "netAmount": null
+      },
+      {
+        "supplierCode": "204040120",
+        "description": null,
+        "quantity": null,
+        "unitPrice": null,
+        "netAmount": null
+      }
+    ]
+  },
+
+  "_TEMPLATE_copy_and_fill": {
+    "documentType": "invoice",
+    "invoiceNumber": "YOUR_INVOICE_NUMBER",
+    "date": "DD/MM/YYYY",
+    "supplier": {
+      "name": "SUPPLIER NAME",
+      "taxId": "123456789"
+    },
+    "totalNetValue": "1000.00",
+    "totalVat": "240.00",
+    "totalAmount": "1240.00",
+    "vatRate": "24",
+    "lineItems": [
+      {
+        "supplierCode": "CODE001",
+        "description": "Item description",
+        "quantity": "10",
+        "unitPrice": "100.00",
+        "netAmount": "1000.00"
+      }
+    ]
+  }
+}

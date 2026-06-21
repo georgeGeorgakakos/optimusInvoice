@@ -1,0 +1,61 @@
+{
+  "suppliers": {},
+  "products": {
+    "317-74245": {
+      "erp_code": "317-74245",
+      "description": "PRODUCT A",
+      "frequency": 2664,
+      "first_seen": "2026-02-20T17:06:13.231102",
+      "last_used": "2026-06-14T16:27:24.797421",
+      "avg_price": 10.5
+    },
+    "317-74333": {
+      "erp_code": "317-74333",
+      "description": "PRODUCT B",
+      "frequency": 2664,
+      "first_seen": "2026-02-20T17:06:13.232757",
+      "last_used": "2026-06-14T16:27:24.801362",
+      "avg_price": 12.0
+    },
+    "317-74677": {
+      "erp_code": "317-74677",
+      "description": "PRODUCT C",
+      "frequency": 2661,
+      "first_seen": "2026-02-20T17:06:13.234189",
+      "last_used": "2026-06-14T16:27:24.804767",
+      "avg_price": 8.75
+    }
+  },
+  "mappings": {
+    "101:74245": {
+      "supplier_id": "101",
+      "supplier_code": "74245",
+      "erp_code": "317-74245",
+      "description": "PRODUCT A",
+      "frequency": 2664,
+      "first_seen": "2026-02-20T17:06:13.231099",
+      "last_used": "2026-06-14T16:27:24.797413",
+      "avg_price": 10.5
+    },
+    "101:74333": {
+      "supplier_id": "101",
+      "supplier_code": "74333",
+      "erp_code": "317-74333",
+      "description": "PRODUCT B",
+      "frequency": 2664,
+      "first_seen": "2026-02-20T17:06:13.232751",
+      "last_used": "2026-06-14T16:27:24.801351",
+      "avg_price": 12.0
+    },
+    "101:74677": {
+      "supplier_id": "101",
+      "supplier_code": "74677",
+      "erp_code": "317-74677",
+      "description": "PRODUCT C",
+      "frequency": 2661,
+      "first_seen": "2026-02-20T17:06:13.234185",
+      "last_used": "2026-06-14T16:27:24.804755",
+      "avg_price": 8.75
+    }
+  }
+}

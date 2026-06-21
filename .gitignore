@@ -1,0 +1,21 @@
+﻿# Large artifacts — never commit
+model_cache/
+vlm-service/wheels/
+qwen-vl-service/wheels/
+gemma-vl-service/wheels/
+qwen-vl-service/
+gemma-vl-service/
+node_modules/
+dist/
+dist-server/
+*.whl
+*.gguf
+*.safetensors
+*.incomplete
+*.traineddata
+ResearchPapers/
+.env
+
+# === Added by Upload-OptimusInvoice.ps1 ===
+*.log
+.next/

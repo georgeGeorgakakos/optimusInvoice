@@ -1,0 +1,21 @@
+# Build-context hygiene for the optimus-app build (context '.' in docker-compose.yml).
+# Dockerfile.app does `COPY . .` then `pnpm build`, so without this the whole
+# repo — node_modules, .git, model_cache (~10GB) — uploads to the daemon each
+# app build. The vlm/qwen/gemma services build from their own subfolders and
+# are unaffected by this file.
+.git
+node_modules
+**/node_modules
+client/dist
+dist
+model_cache
+*.log
+.env
+vlm-cache
+llama-models
+.idea
+.vscode
+# Per-service build subfolders are not needed by the app image
+vlm-service/wheels
+qwen-vl-service/wheels
+gemma-vl-service/wheels

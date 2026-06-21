@@ -1,0 +1,55 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1767860153442,
+      "tag": "0000_strange_famine",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1767860297423,
+      "tag": "0001_safe_lightspeed",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1771602412122,
+      "tag": "0002_yellow_the_spike",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1771605911011,
+      "tag": "0003_colossal_logan",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1771608958120,
+      "tag": "0004_violet_thunderbolts",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1771672373872,
+      "tag": "0005_melted_proudstar",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1774039829562,
+      "tag": "0006_giant_molten_man",
+      "breakpoints": true
+    }
+  ]
+}

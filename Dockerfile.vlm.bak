@@ -1,0 +1,92 @@
+# ─────────────────────────────────────────────────────────────────
+# Optimus VLM Service — Surya + GOT-OCR2 + Marker + local bridge
+# vLLM (olmOCR / Qwen2.5-VL) runs as a SEPARATE container.
+# ─────────────────────────────────────────────────────────────────
+FROM nvidia/cuda:12.1.1-cudnn8-devel-ubuntu22.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3.11 python3.11-dev python3-pip \
+        git wget curl libgl1 libglib2.0-0 libsm6 libxext6 \
+        poppler-utils ghostscript \
+    && rm -rf /var/lib/apt/lists/*
+
+# Make python3.11 the default
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
+ && update-alternatives --install /usr/bin/pip pip /usr/bin/pip3 1
+
+WORKDIR /app
+
+# ── pip base ──────────────────────────────────────────────────────
+RUN pip install --upgrade pip
+
+# ── PyTorch (CUDA 12.1) ───────────────────────────────────────────
+RUN pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# ── Surya OCR — pin transformers to 4.x to avoid Surya 0.17 breakage ──
+#    Surya 0.17 requires transformers>=5 internally but its custom configs
+#    break with it; pinning 4.46 is the stable workaround.
+RUN pip install \
+        "transformers==4.46.3" \
+        "surya-ocr==0.8.1" \
+        "Pillow>=10.0" \
+        "numpy<2"
+
+# ── GOT-OCR2 ──────────────────────────────────────────────────────
+RUN pip install tiktoken verovio accelerate safetensors
+
+# ── NO Marker — it conflicts with transformers 4.46.3 (pulls 4.57+)
+#    Surya 0.8.1 + GOT-OCR2 both require 4.46.3 and work fine without Marker
+#    For text-based PDFs, pdfplumber handles extraction directly in Node.js
+
+# ── FastAPI runtime ────────────────────────────────────────────────
+RUN pip install \
+        "fastapi>=0.110" \
+        "uvicorn[standard]>=0.29" \
+        "httpx>=0.27" \
+        "pydantic>=2.0" \
+        "python-multipart"
+
+# ── PDF handling + semantic extraction runtime ─────────────────────
+#    pdf2image   → converts PDF pages to PNG for Surya (REQUIRED)
+#    pdfplumber  → fast text extraction for digital PDFs (use_native_text path)
+#    packaging   → used by vlm_service.py to check transformers version
+#    huggingface_hub → GGUF model download for semantic_extractor
+#    llama-cpp-python → CPU inference for Qwen2.5-3b GGUF (semantic extraction)
+RUN pip install \
+        "pdf2image>=1.17.0" \
+        "pdfplumber>=0.11.0" \
+        "packaging>=23.0" \
+        "huggingface_hub>=0.23.0"
+
+# llama-cpp-python: CPU-only build (no CUDA flags needed — semantic model runs on CPU)
+RUN pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+
+# ── Copy service ──────────────────────────────────────────────────
+# Build context depends on which script invokes docker build:
+#   OptimusInvoice.ps1       → context = project root → files at server/python/
+#   deploySolutionLocal.ps1  → context = vlm-service/ → files pre-copied as app.py etc.
+# The vlm-service/Dockerfile (used by deploySolutionLocal) has its own COPY lines.
+# This Dockerfile.vlm is used exclusively by docker-compose.vlm.yml (project root context).
+COPY server/python/vlm_service.py vlm_service.py
+COPY server/python/vlm_invoice_parser.py vlm_invoice_parser.py
+COPY server/python/semantic_extractor.py semantic_extractor.py
+
+# ── Model cache volumes (mount at runtime) ────────────────────────
+#    /models/surya  → Surya weights
+#    /models/gotocr → GOT-OCR2 weights
+#    /models/marker → Marker weights
+ENV HF_HOME=/models
+ENV TRANSFORMERS_CACHE=/models
+ENV TORCH_HOME=/models
+
+# ── Service config via env vars ───────────────────────────────────
+ENV VLLM_BASE_URL=http://vllm:8200
+ENV OLMOCR_MODEL=allenai/olmOCR-2-7B-1025
+ENV QWEN_VL_MODEL=Qwen/Qwen2.5-VL-7B-Instruct
+ENV MAX_PAGES=10
+ENV SURYA_LANGS=el,en
+
+EXPOSE 8300
+
+CMD ["uvicorn", "vlm_service:app", "--host", "0.0.0.0", "--port", "8300", "--workers", "1"]

@@ -1,0 +1,41 @@
+# 1. Build
+cd vlm-service
+docker build -t vlm-service .
+
+# 2. Run (first start downloads ~6GB model weights)
+docker run -d -p 8100:8100 -v vlm-cache:/root/.cache --memory=8g vlm-service
+
+# 3. Test
+python test_vlm.py DeltioApostolis.pdf dispatch_note
+
+
+==================================
+
+# Stop old container
+docker rm -f vlm-service
+
+# Rebuild with fixed files
+cd C:\Users\ggeorgakakos\InvoiceAutomation\vlm-service
+docker build -t vlm-service .
+
+# Run again
+docker run -d --name vlm-service -p 8100:8100 -v vlm-cache:/root/.cache --memory=8g vlm-service
+
+# Watch logs
+docker logs -f vlm-service
+
+=============================================================================
+docker rm -f vlm-service
+docker build --no-cache -t vlm-service .
+docker run -d --name vlm-service -p 8100:8100 -v vlm-cache:/root/.cache --memory=16g vlm-service
+docker run -d --name vlm-service -p 8100:8100 -v vlm-cache:/root/.cache --memory=24g vlm-service
+
+docker logs -f vlm-service
+
+pnpm dev
+
+# Check the necessary
+& "C:\Users\ggeorgakakos\AppData\Local\Programs\Python\Python314\python.exe" -c "import requests; import json; print(json.dumps(requests.get('http://localhost:8100/health').json(), indent=2))"
+
+#Test Surya
+& "C:\Users\ggeorgakakos\AppData\Local\Programs\Python\Python314\python.exe" test_vlm.py ..\data\invoices\DeltioApostolis.pdf dispatch_note surya

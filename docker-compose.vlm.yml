@@ -1,0 +1,167 @@
+# Optimus AI Stack - docker-compose.vlm.yml
+#
+# Services:
+#   vlm_service       - FastAPI: Surya + GOT-OCR2 + Marker  (port 8300)  <- always runs
+#   vllm              - vLLM: olmOCR-2-7B + Qwen2.5-VL      (port 8200)  <- optional (-WithVllm)
+#   qwen_vl_service   - Qwen2.5-VL-3B local vision           (port 8400)  <- always runs
+#   gemma_vl_service  - Gemma 3 4B-it local vision           (port 8500)  <- always runs  [NEW]
+#
+# Usage:
+#   VLM only:    docker compose -f docker-compose.vlm.yml up --build vlm_service
+#   Full stack:  docker compose -f docker-compose.vlm.yml up --build vlm_service qwen_vl_service gemma_vl_service
+
+services:
+
+  # vLLM server (olmOCR-2-7B or Qwen2.5-VL)
+  # Requires a real NVIDIA GPU with working Docker GPU passthrough.
+  # If GPU passthrough is not working, use vlm_service only (Surya+Marker on CPU).
+  vllm:
+    image: vllm/vllm-openai:latest
+    container_name: optimus_vllm
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    ports:
+      - "8200:8000"
+    volumes:
+      - type: bind
+        source: ./model_cache
+        target: /root/.cache/huggingface
+    command: >
+      --model ${VLLM_MODEL:-allenai/olmOCR-2-7B-1025}
+      --dtype bfloat16
+      --max-model-len 8192
+      --trust-remote-code
+      --port 8000
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    restart: unless-stopped
+
+  # VLM FastAPI service - runs on CPU (no GPU required)
+  # Surya + GOT-OCR2 + Marker work on CPU. Slower but fully functional.
+  # olmOCR and Qwen2.5-VL are proxied to the vllm container (optional).
+  # qwen_vl_local and gemma_vl_local are proxied to their own containers.
+  vlm_service:
+    build:
+      context: .
+      dockerfile: Dockerfile.vlm
+    container_name: optimus_vlm
+    ports:
+      - "8300:8300"
+    environment:
+      - VLLM_BASE_URL=http://vllm:8200
+      - OLMOCR_MODEL=allenai/olmOCR-2-7B-1025
+      - QWEN_VL_MODEL=${QWEN_VL_MODEL:-Qwen/Qwen2.5-VL-7B-Instruct}
+      - QWEN_VL_SERVICE_URL=http://qwen_vl_service:8400
+      - GEMMA_VL_SERVICE_URL=http://gemma_vl_service:8500   # NEW
+      - MAX_PAGES=10
+      - SURYA_LANGS=el,en
+      - HF_HOME=/models
+      - TRANSFORMERS_CACHE=/models
+      - TORCH_HOME=/models
+      # Surya weights pre-cached by Download-VlmWheels.ps1 step 9 — run offline
+      # to avoid the runtime HuggingFace CDN timeout.
+      - HF_HUB_OFFLINE=1
+      # ── Semantic extractor tuning (Qwen2.5-3B GGUF on 12-core / 64GB RAM) ──
+      - SEMANTIC_MODEL=qwen2.5:3b
+      - LLAMA_N_THREADS=10        # 10 of 12 cores — leaves 2 for OS + Surya
+      - LLAMA_N_CTX=4096          # 4096 tokens — semantic prompt (~1500) + capped OCR text (~1500) exceeds 2048
+      - LLAMA_N_BATCH=512         # process 512 tokens at once — maximises CPU throughput
+      - SEMANTIC_TIMEOUT=120      # 2 min hard timeout — was 10 min, now safe to lower
+      - OPTIMUS_CLIENT_PROFILE=/app/data/client_profiles/metro.json
+    volumes:
+      - type: bind
+        source: ./model_cache
+        target: /models
+      # Client-profile mount is read-WRITE so the Node process (running on the
+      # host or in another container) can write updated profiles via the
+      # clientProfile.upsert tRPC mutation. The Python loader (client_profile.py)
+      # watches the file's mtime and auto-reloads — see _check_reload() there.
+      - type: bind
+        source: ./data/client_profiles
+        target: /app/data/client_profiles
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8300/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+    restart: unless-stopped
+
+  # Qwen2.5-VL-3B vision service — separate container for transformers>=4.52
+  # vlm_service proxies qwen_vl_local requests here via HTTP
+  qwen_vl_service:
+    build:
+      context: .
+      dockerfile: Dockerfile.qwen_vl
+    container_name: optimus_qwen_vl
+    ports:
+      - "8400:8400"
+    environment:
+      - QWEN_VL_LOCAL_MODEL=Qwen/Qwen2.5-VL-3B-Instruct
+      - HF_HOME=/models
+      - TRANSFORMERS_CACHE=/models
+      - TORCH_DEVICE=cpu
+      - PORT=8400
+      - LOG_LEVEL=INFO
+      - QWEN_VL_DPI=72          # PDF→image DPI — unified 150 across all deploy paths
+    volumes:
+      - type: bind
+        source: ./model_cache
+        target: /models
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8400/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 300s
+    restart: unless-stopped
+
+  # Gemma 3 4B-it vision service — separate container, mirrors qwen_vl_service
+  # vlm_service proxies gemma_vl_local requests here via HTTP
+  # Same architecture: transformers>=4.52, CPU-only, lazy model load, /extract-pdf endpoint
+  gemma_vl_service:
+    build:
+      context: .
+      dockerfile: Dockerfile.gemma_vl
+    container_name: optimus_gemma_vl
+    ports:
+      - "8500:8500"
+    environment:
+      - GEMMA_VL_LOCAL_MODEL=google/gemma-3-4b-it
+      - HF_HOME=/models
+      - TRANSFORMERS_CACHE=/models
+      - TORCH_DEVICE=cpu
+      - PORT=8500
+      - LOG_LEVEL=INFO
+      - GEMMA_VL_DPI=72         # PDF→image DPI — unified 150 across all deploy paths
+      # ── llama.cpp tuning for Gemma 3 GGUF (mirrors vlm_service) ───────
+      - LLAMA_N_THREADS=10        # 10 of 12 cores
+      - LLAMA_N_CTX=4096          # 4096 tokens — needed for multi-line addresses + line items. 2048 truncated.
+      - LLAMA_N_BATCH=512         # process 512 tokens at once
+      # Output cap — complex invoices (10+ line items) need ~1200 tokens.
+      # 512 was too tight and truncated JSON mid-key.
+      - GEMMA_MAX_NEW_TOKENS=1024  # safe upper bound
+    volumes:
+      - type: bind
+        source: ./model_cache
+        target: /models
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8500/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 300s
+    restart: unless-stopped
+
+networks:
+  default:
+    name: optimus_ai_net

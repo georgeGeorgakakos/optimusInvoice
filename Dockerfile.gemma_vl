@@ -1,0 +1,88 @@
+# Dockerfile.gemma_vl
+# ─────────────────────────────────────────────────────────────────────────────
+# Gemma 3 4B-it vision service — llama.cpp backend (Q4_K_M quantization).
+#
+# 100% OFFLINE BUILD — uses pre-downloaded wheels from /wheels/.
+# No transformers / no torch — pure llama-cpp-python inference.
+#
+# Wheels required (produced by Download-VlmWheels.ps1):
+#   wheels/llama/         — llama-cpp-python source tarball + build deps
+#   wheels/requirements/  — fastapi, uvicorn, pdf2image, huggingface-hub, httpx
+#   wheels/torch/         — Pillow only (we steal it from this folder)
+#
+# Image size: ~1.2GB (vs 3GB with transformers, vs 9GB with online PyPI bloat)
+# Build time: ~2 min (llama-cpp compilation from source)
+# Inference: ~5-10 tok/s on CPU (vs ~0.4 tok/s with bf16 transformers)
+# ─────────────────────────────────────────────────────────────────────────────
+
+FROM python:3.11-slim
+
+# ── System deps: compilation toolchain for llama-cpp-python + pdf utils ─────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        poppler-utils \
+        libgl1 \
+        libglib2.0-0 \
+        cmake \
+        build-essential \
+        pkg-config \
+        git \
+        wget \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# ── Pillow + numpy + jinja2 (shared with torch wheels folder) ────────────────
+COPY wheels/torch/ /wheels/torch/
+RUN pip install --no-cache-dir --no-index \
+    --find-links=/wheels/torch \
+    "pillow>=10.0" "numpy>=1.21" "MarkupSafe" "jinja2" "typing-extensions" \
+    "filelock" "fsspec" "setuptools"
+
+# ── FastAPI + uvicorn + pdf2image + huggingface-hub (from requirements wheels) ──
+COPY wheels/requirements/ /wheels/requirements/
+RUN pip install --no-cache-dir --no-index \
+    --find-links=/wheels/requirements \
+    --find-links=/wheels/torch \
+    "fastapi==0.115.6" \
+    "uvicorn[standard]==0.34.0" \
+    "python-multipart==0.0.20" \
+    "pdf2image>=1.17.0" \
+    "httpx>=0.23.0" \
+    "huggingface-hub==0.29.3"
+
+# ── llama-cpp-python: compile from source (~2 min) ──────────────────────────
+# CMAKE_ARGS disable GPU/Metal/BLAS — we want pure CPU build, no auto-detect
+# of CUDA on the build host. Mirror vlm-service Dockerfile pattern.
+COPY wheels/llama/ /wheels/llama/
+RUN CMAKE_ARGS="-DGGML_CUDA=OFF -DGGML_METAL=OFF -DGGML_BLAS=OFF" \
+    pip install --no-cache-dir --no-index \
+    --find-links=/wheels/llama \
+    --find-links=/wheels/requirements \
+    --find-links=/wheels/torch \
+    "llama-cpp-python>=0.3.5" \
+    "diskcache>=5.6.1"
+
+# ── Sanity checks ────────────────────────────────────────────────────────────
+RUN python -c "import llama_cpp; print('llama_cpp version:', llama_cpp.__version__)"
+RUN python -c "from llama_cpp import Llama; from llama_cpp.llama_chat_format import Llava15ChatHandler; print('Llava15ChatHandler OK')"
+RUN python -c "from huggingface_hub import hf_hub_download; print('huggingface_hub OK')"
+
+# ── Application code ─────────────────────────────────────────────────────────
+COPY gemma_vl_engine.py  /app/gemma_vl_engine.py
+COPY gemma_vl_service.py /app/gemma_vl_service.py
+
+ENV HF_HOME=/models
+ENV TRANSFORMERS_CACHE=/models
+ENV PORT=8500
+
+# llama.cpp threading defaults (overridden by docker run -e ...)
+ENV LLAMA_N_THREADS=10
+ENV LLAMA_N_CTX=4096
+ENV LLAMA_N_BATCH=512
+
+EXPOSE 8500
+
+HEALTHCHECK --interval=30s --timeout=10s --retries=5 --start-period=300s \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8500/health')" || exit 1
+
+CMD ["python", "gemma_vl_service.py"]

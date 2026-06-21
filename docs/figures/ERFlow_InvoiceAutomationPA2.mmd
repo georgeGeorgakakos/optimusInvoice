@@ -1,0 +1,51 @@
+flowchart TD
+    A([PDF uploaded]) --> B
+
+    subgraph TS["python-integration.ts — classifyAndExtract()"]
+        B["getVlmStatus()\nPOST VLM_SERVICE_URL/health"]
+        B -->|service offline| ERR["throw — start Docker first"]
+        B -->|service online| C["getVlmOcrText()\nPOST :8300/extract-pdf\nengine · use_native_text params"]
+    end
+
+    C --> D
+
+    subgraph PY["vlm_service.py — extract_pdf()"]
+        D{"use_native_text\n= '1' ?"}
+        D -->|yes| E["pdfplumber.open(pdf_bytes)\nextract_text() per page"]
+        E -->|"≥ 50 chars"| F1["used_engine = 'pdfplumber'\nextraction_method = 'native_text'"]
+        E -->|"< 50 chars"| G
+        D -->|no| G
+        G["convert_from_bytes(dpi=200)\n_run_surya(img_b64, 'el')\nbatch_text_detection + run_recognition"]
+        G --> F2["used_engine = 'surya'\nextraction_method = 'ocr_image'"]
+        F1 & F2 --> H["ocr_text ready"]
+        H --> I{"SEMANTIC_ENABLED\n= '1' ?"}
+        I -->|yes| J["get_extractor()\nwait up to 30s if loading"]
+        J --> K["loop.run_in_executor\nextractor.extract(ocr_text)"]
+        I -->|no| L
+        K -->|"_llm loaded"| M["_run_inference()\ncreate_chat_completion\nQwen2.5-3B GGUF"]
+        K -->|"_llm None"| L
+        M -->|"_parse_response() OK"| N["_extraction_method =\n'semantic_llm'"]
+        M -->|"parse fails"| L
+        L["_regex_fallback()\nvlm_invoice_parser\nparse_invoice_fields()"]
+        L --> O["_extraction_method =\n'regex_fallback'"]
+        N & O --> P{"items == 0 OR\nconf < 60% AND\nqwen_vl loaded?"}
+        P -->|yes| Q["_run_qwen_vl()\nvLLM line-items prompt"]
+        P -->|no| R["result dict\nocr_text + invoice + extraction_method"]
+        Q --> R
+    end
+
+    R --> S
+
+    subgraph TS2["python-integration.ts — classifyAndExtract() continued"]
+        S["detectDocumentType(text)\nkeyword regex"]
+        S --> T1["invoice"]
+        S --> T2["credit_note"]
+        S --> T3["cmr"]
+        S --> T4["dispatch_note"]
+        T1 & T2 & T3 & T4 --> U{"vlmResult.structured\n> 2 keys?"}
+        U -->|yes| V["invoiceFields =\nvlmResult.structured"]
+        U -->|no| W["parseInvoiceWithVlmParser()\nvlm_invoice_parser.py subprocess"]
+        V & W --> X["Build extraction object\n+ _vlm_engine, _vlm_extraction_method"]
+    end
+
+    X --> Y([extractedDataJson → DB\nrouters.ts])

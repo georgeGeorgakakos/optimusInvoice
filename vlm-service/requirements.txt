@@ -1,0 +1,20 @@
+# VLM Document OCR Service — Multi-Engine
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+
+# Surya OCR (fast engine)
+surya-ocr>=0.6.0
+
+# Chandra OCR (full-page document understanding, 9B model)
+chandra-ocr>=0.1.0
+
+# GOT-OCR2 additional deps
+tiktoken>=0.7.0
+
+# PDF to image conversion
+pdf2image>=1.17.0
+Pillow>=10.0.0
+
+# Text-based PDF extraction (pre-flight before Surya OCR)
+pdfplumber>=0.11.0

@@ -1,0 +1,25 @@
+{
+  "_comment_1": "Example client profile for METRO AEBE. Activate it by symlinking or copying to ./data/client_profiles/active.json, or by setting OPTIMUS_CLIENT_PROFILE=/app/data/client_profiles/metro.json in the Docker env.",
+  "_comment_2": "TODO George: verify the clientVats and clientAddressPatterns below against METRO master data BEFORE running on real METRO docs. Values marked REPLACE_ME are placeholders.",
+  "clientName": "METRO AEBE",
+  "clientVats": [
+    "REPLACE_ME_WITH_METRO_AFM"
+  ],
+  "clientNamePatterns": [
+    "METRO\\s*AEBE",
+    "METRO\\s+CASH\\s*&?\\s*CARRY",
+    "ΜΕΤΡΟ\\s*ΑΕΒΕ",
+    "ΜΕΤΡΟ\\s*AEBE",
+    "ΜΕΤRO"
+  ],
+  "clientAddressPatterns": [
+    "REPLACE_ME_WITH_METRO_HQ_STREET",
+    "REPLACE_ME_WITH_METRO_DC_ADDRESSES"
+  ],
+  "skipIssuerPatterns": [
+    "METRO",
+    "ΜΕΤΡΟ",
+    "ΜΕΤRO"
+  ],
+  "managerPatterns": []
+}

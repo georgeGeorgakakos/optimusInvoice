@@ -1,0 +1,30 @@
+flowchart TD
+    A([PDF uploaded]) --> B
+
+    subgraph S1["Stage 1 — PDF type detection"]
+        B["pdfplumber pre-flight\n(if use_native_text = 1)"]
+        B -->|"digital PDF\n≥ 50 chars found"| C["pdfplumber\nNative text · ~0.1s · perfect accuracy"]
+        B -->|"scanned / image\n< 50 chars found"| D["Surya OCR\nImage OCR · ~90s/page on CPU"]
+    end
+
+    C --> E["raw OCR text"]
+    D --> E
+
+    subgraph S2["Stage 2 — Document type classification"]
+        E --> F["detectDocumentType()\nKeyword regex on raw text"]
+        F --> G1["invoice"]
+        F --> G2["credit note"]
+        F --> G3["CMR"]
+        F --> G4["dispatch note"]
+    end
+
+    G1 & G2 & G3 & G4 --> H
+
+    subgraph S3["Stage 3 — Semantic extraction"]
+        H["Qwen2.5-3B · llama-cpp-python\nStructured JSON from raw text"]
+        H --> I{"Confidence\ncheck"}
+        I -->|"< 60%"| J["Regex fallback\nvlm_invoice_parser.py"]
+        I -->|"≥ 60%"| K["Structured output\nissuer · recipient · lineItems"]
+    end
+
+    J & K --> L([extractedDataJson → DB])

@@ -1,0 +1,41 @@
+# docker-compose.vlm.yml
+# Add VLM service alongside your main app
+# Usage: docker compose -f docker-compose.yml -f docker-compose.vlm.yml up
+#
+# Or merge into your existing docker-compose.yml
+
+services:
+  vlm-service:
+    build:
+      context: ./vlm-service
+      dockerfile: Dockerfile
+    container_name: vlm-service
+    ports:
+      - "8100:8100"
+    environment:
+      - VLM_MODEL=Qwen/Qwen2.5-VL-3B-Instruct
+      - VLM_MAX_TOKENS=2048
+      - PORT=8100
+      - LOG_LEVEL=INFO
+    volumes:
+      # Cache the model weights so they persist between restarts
+      - vlm-model-cache:/root/.cache/huggingface
+    # CPU resource limits — adjust based on your server
+    deploy:
+      resources:
+        limits:
+          memory: 8G    # Qwen2.5-VL-3B needs ~6-7GB RAM
+          cpus: "4"
+        reservations:
+          memory: 4G
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8100/health')"]
+      interval: 30s
+      timeout: 10s
+      start_period: 180s  # Model download + load can take a few minutes first time
+      retries: 3
+
+volumes:
+  vlm-model-cache:
+    driver: local

@@ -1,0 +1,95 @@
+# =============================================================================
+#  OptimusInvoice — Qwen2.5-VL-3B Vision Service
+#  Image: qwen-vl-service   Port: 8400 (internal) mapped to host 8400
+# =============================================================================
+#
+#  PURPOSE: Runs Qwen2.5-VL-3B-Instruct vision model for scanned invoice OCR.
+#  Kept in a separate container from vlm-service because:
+#    - Qwen2.5-VL-3B requires transformers>=4.52
+#    - Surya OCR 0.6.13 requires transformers==4.46.3
+#    - These two versions CANNOT coexist in the same Python environment
+#
+#  PIPELINE: PDF bytes → pdf2image → Qwen2.5-VL-3B → structured JSON
+#
+#  MODEL CACHE: Model weights (~7.3 GB safetensors) are bind-mounted from
+#  host ./model_cache/ into /models inside the container.
+#  Run Download-VlmWheels.ps1 step 7 once to pre-download before first start.
+# =============================================================================
+
+FROM python:3.11-slim
+
+# System deps: poppler for pdf2image, libgl/glib for image processing
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    poppler-utils \
+    libgl1 \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# ── Step 1: PyTorch CPU-only ──────────────────────────────────────────────────
+# Reuse the same wheels pre-downloaded by Download-VlmWheels.ps1
+COPY wheels/torch/ /wheels/torch/
+RUN pip install --no-cache-dir --no-index \
+    --find-links=/wheels/torch \
+    "torch==2.5.1+cpu" "torchvision==0.20.1+cpu"
+
+# ── Step 2: transformers>=4.52 + accelerate ───────────────────────────────────
+# Qwen2.5-VL-3B requires transformers>=4.52 for Qwen2_5_VLForConditionalGeneration
+COPY wheels/qwen_vl/ /wheels/qwen_vl/
+COPY wheels/transformers/ /wheels/transformers/
+COPY wheels/requirements/ /wheels/requirements/
+RUN pip install --no-cache-dir --no-index \
+    --find-links=/wheels/qwen_vl \
+    --find-links=/wheels/transformers \
+    --find-links=/wheels/requirements \
+    "transformers>=4.52.0" "accelerate>=0.26.0" "huggingface-hub>=0.29.3" \
+    2>/dev/null || \
+    pip install --no-cache-dir \
+    "transformers>=4.52.0" "accelerate>=0.26.0" "huggingface-hub>=0.29.3"
+
+# ── Step 3: qwen-vl-utils + service deps ─────────────────────────────────────
+RUN pip install --no-cache-dir --no-index \
+    --find-links=/wheels/qwen_vl \
+    --find-links=/wheels/requirements \
+    "qwen-vl-utils>=0.0.8" \
+    "fastapi==0.115.6" \
+    "uvicorn[standard]==0.34.0" \
+    "python-multipart==0.0.20" \
+    "pdf2image>=1.17.0" \
+    "pdfminer.six==20251230" \
+    "pillow>=10.2.0" \
+    "httpx>=0.23.0" \
+    2>/dev/null || \
+    pip install --no-cache-dir \
+    "qwen-vl-utils>=0.0.8" \
+    "fastapi==0.115.6" \
+    "uvicorn[standard]==0.34.0" \
+    "python-multipart==0.0.20" \
+    "pdf2image>=1.17.0" \
+    "pdfminer.six==20251230" \
+    "pillow>=10.2.0" \
+    "httpx>=0.23.0"
+
+# ── Verification ──────────────────────────────────────────────────────────────
+RUN python -c "import transformers; print('transformers=' + transformers.__version__)"
+RUN python -c "from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLForConditionalGeneration; print('Qwen2_5_VLForConditionalGeneration OK')"
+
+# ── Application files ─────────────────────────────────────────────────────────
+COPY qwen_vl_service.py .
+COPY qwen_vl_engine.py .
+
+# ── Runtime environment ───────────────────────────────────────────────────────
+ENV PORT=8400
+ENV LOG_LEVEL=INFO
+ENV HF_HOME=/models
+ENV TRANSFORMERS_CACHE=/models
+ENV TORCH_DEVICE=cpu
+ENV QWEN_VL_LOCAL_MODEL=Qwen/Qwen2.5-VL-3B-Instruct
+
+EXPOSE 8400
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=300s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8400/health')" || exit 1
+
+CMD ["python", "qwen_vl_service.py"]

@@ -1,0 +1,1 @@
+ALTER TABLE `invoices` ADD `documentType` enum('invoice','credit_note','cmr','dispatch_note') DEFAULT 'invoice' NOT NULL;

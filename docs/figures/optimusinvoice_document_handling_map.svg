@@ -1,0 +1,234 @@
+<svg width="100%" viewBox="0 0 680 870" xmlns="http://www.w3.org/2000/svg">
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <style>
+    text { font-family: ui-sans-serif, system-ui, sans-serif; }
+    .th  { font-size: 14px; font-weight: 500; fill: #1a1a18; }
+    .ts  { font-size: 12px; font-weight: 400; fill: #5f5e5a; }
+    .arr { stroke: #888780; stroke-width: 1.5; fill: none; }
+    .box { fill: #f1efe8; stroke: #b4b2a9; stroke-width: 0.5; }
+
+    /* c-gray */
+    .c-gray rect, .c-gray ellipse { fill: #f1efe8; stroke: #b4b2a9; stroke-width: 0.5; }
+    .c-gray .th { fill: #444441; }
+    .c-gray .ts { fill: #888780; }
+
+    /* c-blue */
+    .c-blue rect { fill: #e6f1fb; stroke: #185fa5; stroke-width: 0.5; }
+    .c-blue .th  { fill: #0c447c; }
+    .c-blue .ts  { fill: #185fa5; }
+
+    /* c-teal */
+    .c-teal rect { fill: #e1f5ee; stroke: #0f6e56; stroke-width: 0.5; }
+    .c-teal .th  { fill: #085041; }
+    .c-teal .ts  { fill: #0f6e56; }
+
+    /* c-amber */
+    .c-amber rect { fill: #faeeda; stroke: #854f0b; stroke-width: 0.5; }
+    .c-amber .th  { fill: #633806; }
+    .c-amber .ts  { fill: #854f0b; }
+
+    /* c-purple */
+    .c-purple rect { fill: #eeedfe; stroke: #534ab7; stroke-width: 0.5; }
+    .c-purple .th  { fill: #3c3489; }
+    .c-purple .ts  { fill: #534ab7; }
+
+    /* c-coral */
+    .c-coral rect { fill: #faece7; stroke: #993c1d; stroke-width: 0.5; }
+    .c-coral .th  { fill: #712b13; }
+    .c-coral .ts  { fill: #993c1d; }
+
+    /* c-green */
+    .c-green rect { fill: #eaf3de; stroke: #3b6d11; stroke-width: 0.5; }
+    .c-green .th  { fill: #27500a; }
+    .c-green .ts  { fill: #3b6d11; }
+
+    /* c-red */
+    .c-red rect { fill: #fcebeb; stroke: #a32d2d; stroke-width: 0.5; }
+    .c-red .th  { fill: #791f1f; }
+    .c-red .ts  { fill: #a32d2d; }
+
+    @media (prefers-color-scheme: dark) {
+      .th { fill: #d3d1c7; }
+      .ts { fill: #888780; }
+      .arr { stroke: #5f5e5a; }
+      .c-gray rect, .c-gray ellipse { fill: #444441; stroke: #888780; }
+      .c-gray .th { fill: #d3d1c7; } .c-gray .ts { fill: #b4b2a9; }
+      .c-blue rect { fill: #0c447c; stroke: #378add; }
+      .c-blue .th  { fill: #b5d4f4; } .c-blue .ts { fill: #85b7eb; }
+      .c-teal rect { fill: #085041; stroke: #1d9e75; }
+      .c-teal .th  { fill: #9fe1cb; } .c-teal .ts { fill: #5dcaa5; }
+      .c-amber rect { fill: #633806; stroke: #ba7517; }
+      .c-amber .th  { fill: #fac775; } .c-amber .ts { fill: #ef9f27; }
+      .c-purple rect { fill: #3c3489; stroke: #7f77dd; }
+      .c-purple .th  { fill: #cecbf6; } .c-purple .ts { fill: #afa9ec; }
+      .c-coral rect { fill: #712b13; stroke: #d85a30; }
+      .c-coral .th  { fill: #f5c4b3; } .c-coral .ts { fill: #f0997b; }
+      .c-green rect { fill: #27500a; stroke: #639922; }
+      .c-green .th  { fill: #c0dd97; } .c-green .ts { fill: #97c459; }
+      .c-red rect { fill: #791f1f; stroke: #e24b4a; }
+      .c-red .th  { fill: #f7c1c1; } .c-red .ts { fill: #f09595; }
+    }
+  </style>
+</defs>
+
+<!-- ── Title ─────────────────────────────────────────────────────────── -->
+<text class="th" x="340" y="26" text-anchor="middle" font-size="15" font-weight="500">OptimusInvoice — Document Handling Pipeline</text>
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     STAGE 0 — Input
+══════════════════════════════════════════════════════════════════════ -->
+<g class="c-gray">
+  <rect x="240" y="40" width="200" height="44" rx="8"/>
+  <text class="th" x="340" y="62" text-anchor="middle" dominant-baseline="central">PDF uploaded</text>
+</g>
+<line x1="340" y1="84" x2="340" y2="112" class="arr" marker-end="url(#arrow)"/>
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     STAGE 1 — PDF Type Detection
+══════════════════════════════════════════════════════════════════════ -->
+<!-- Stage label -->
+<text class="ts" x="40" y="128" font-size="10" fill="#888780">STAGE 1</text>
+<g class="c-blue">
+  <rect x="120" y="112" width="440" height="56" rx="8"/>
+  <text class="th" x="340" y="132" text-anchor="middle" dominant-baseline="central">PDF type detection</text>
+  <text class="ts" x="340" y="150" text-anchor="middle" dominant-baseline="central">vlm_service.py · extract_pdf() · pdfplumber pre-flight</text>
+</g>
+
+<!-- Branch arrows -->
+<path d="M260 168 L185 208" class="arr" marker-end="url(#arrow)" stroke="#0f6e56"/>
+<path d="M420 168 L495 208" class="arr" marker-end="url(#arrow)" stroke="#854f0b"/>
+<text class="ts" x="185" y="200" text-anchor="middle" fill="#0f6e56" font-size="11">digital PDF</text>
+<text class="ts" x="495" y="200" text-anchor="middle" fill="#854f0b" font-size="11">scanned / image</text>
+
+<!-- pdfplumber -->
+<g class="c-teal">
+  <rect x="60" y="212" width="250" height="56" rx="8"/>
+  <text class="th" x="185" y="232" text-anchor="middle" dominant-baseline="central">pdfplumber</text>
+  <text class="ts" x="185" y="250" text-anchor="middle" dominant-baseline="central">Native text · ~0.1s · perfect accuracy</text>
+</g>
+
+<!-- Surya OCR -->
+<g class="c-amber">
+  <rect x="370" y="212" width="250" height="56" rx="8"/>
+  <text class="th" x="495" y="232" text-anchor="middle" dominant-baseline="central">Surya OCR</text>
+  <text class="ts" x="495" y="250" text-anchor="middle" dominant-baseline="central">Image OCR · pdf2image · ~90s / page</text>
+</g>
+
+<!-- Converge to raw text -->
+<path d="M185 268 L280 304" class="arr" marker-end="url(#arrow)"/>
+<path d="M495 268 L400 304" class="arr" marker-end="url(#arrow)"/>
+<text class="ts" x="340" y="294" text-anchor="middle">raw ocr_text</text>
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     STAGE 2 — Document Type Classification
+══════════════════════════════════════════════════════════════════════ -->
+<text class="ts" x="40" y="325" font-size="10" fill="#888780">STAGE 2</text>
+<g class="c-blue">
+  <rect x="100" y="310" width="480" height="56" rx="8"/>
+  <text class="th" x="340" y="330" text-anchor="middle" dominant-baseline="central">Document type classification</text>
+  <text class="ts" x="340" y="348" text-anchor="middle" dominant-baseline="central">python-integration.ts · detectDocumentType() · keyword regex</text>
+</g>
+
+<!-- 4 doc type branches -->
+<path d="M225 366 L100 404" class="arr" marker-end="url(#arrow)"/>
+<path d="M285 366 L240 404" class="arr" marker-end="url(#arrow)"/>
+<path d="M395 366 L440 404" class="arr" marker-end="url(#arrow)"/>
+<path d="M455 366 L580 404" class="arr" marker-end="url(#arrow)"/>
+
+<g class="c-purple">
+  <rect x="28" y="404" width="144" height="44" rx="6"/>
+  <text class="th" x="100" y="426" text-anchor="middle" dominant-baseline="central">invoice</text>
+</g>
+<g class="c-coral">
+  <rect x="168" y="404" width="144" height="44" rx="6"/>
+  <text class="th" x="240" y="426" text-anchor="middle" dominant-baseline="central">credit note</text>
+</g>
+<g class="c-teal">
+  <rect x="368" y="404" width="144" height="44" rx="6"/>
+  <text class="th" x="440" y="426" text-anchor="middle" dominant-baseline="central">CMR</text>
+</g>
+<g class="c-amber">
+  <rect x="508" y="404" width="144" height="44" rx="6"/>
+  <text class="th" x="580" y="426" text-anchor="middle" dominant-baseline="central">dispatch note</text>
+</g>
+
+<!-- All types converge -->
+<path d="M100 448 L278 490" class="arr" marker-end="url(#arrow)"/>
+<path d="M240 448 L308 490" class="arr" marker-end="url(#arrow)"/>
+<path d="M440 448 L372 490" class="arr" marker-end="url(#arrow)"/>
+<path d="M580 448 L402 490" class="arr" marker-end="url(#arrow)"/>
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     STAGE 3 — Semantic Extraction
+══════════════════════════════════════════════════════════════════════ -->
+<text class="ts" x="40" y="510" font-size="10" fill="#888780">STAGE 3</text>
+<g class="c-blue">
+  <rect x="120" y="496" width="440" height="56" rx="8"/>
+  <text class="th" x="340" y="516" text-anchor="middle" dominant-baseline="central">Semantic extraction</text>
+  <text class="ts" x="340" y="534" text-anchor="middle" dominant-baseline="central">semantic_extractor.py · SemanticExtractor.extract()</text>
+</g>
+
+<!-- Branch: Qwen vs Regex -->
+<path d="M260 552 L185 590" class="arr" marker-end="url(#arrow)" stroke="#27500a"/>
+<path d="M420 552 L495 590" class="arr" marker-end="url(#arrow)" stroke="#791f1f"/>
+<text class="ts" x="185" y="583" text-anchor="middle" fill="#27500a" font-size="11">LLM available</text>
+<text class="ts" x="495" y="583" text-anchor="middle" fill="#791f1f" font-size="11">LLM unavailable</text>
+
+<!-- Qwen -->
+<g class="c-green">
+  <rect x="60" y="594" width="250" height="56" rx="8"/>
+  <text class="th" x="185" y="614" text-anchor="middle" dominant-baseline="central">Qwen2.5-3B · llama-cpp</text>
+  <text class="ts" x="185" y="632" text-anchor="middle" dominant-baseline="central">_extraction_method = 'semantic_llm'</text>
+</g>
+
+<!-- Regex fallback -->
+<g class="c-red">
+  <rect x="370" y="594" width="250" height="56" rx="8"/>
+  <text class="th" x="495" y="614" text-anchor="middle" dominant-baseline="central">Regex fallback</text>
+  <text class="ts" x="495" y="632" text-anchor="middle" dominant-baseline="central">vlm_invoice_parser.py · 8 formats</text>
+</g>
+
+<!-- Confidence check -->
+<path d="M185 650 L280 692" class="arr" marker-end="url(#arrow)"/>
+<path d="M495 650 L400 692" class="arr" marker-end="url(#arrow)"/>
+<text class="ts" x="340" y="681" text-anchor="middle">confidence score</text>
+
+<g class="c-gray">
+  <rect x="200" y="692" width="280" height="44" rx="8"/>
+  <text class="th" x="340" y="714" text-anchor="middle" dominant-baseline="central">Confidence check</text>
+</g>
+
+<!-- Low / high -->
+<path d="M265 736 L175 770" class="arr" marker-end="url(#arrow)" stroke="#a32d2d"/>
+<path d="M415 736 L505 770" class="arr" marker-end="url(#arrow)" stroke="#27500a"/>
+<text class="ts" x="175" y="763" text-anchor="middle" fill="#a32d2d" font-size="11">&lt; 60%</text>
+<text class="ts" x="505" y="763" text-anchor="middle" fill="#27500a" font-size="11">≥ 60%</text>
+
+<!-- Escalation -->
+<g class="c-amber">
+  <rect x="48" y="774" width="254" height="44" rx="6"/>
+  <text class="th" x="175" y="788" text-anchor="middle" dominant-baseline="central">VLM escalation</text>
+  <text class="ts" x="175" y="806" text-anchor="middle" dominant-baseline="central">_run_qwen_vl() if loaded</text>
+</g>
+
+<!-- Pass through -->
+<g class="c-green">
+  <rect x="378" y="774" width="254" height="44" rx="6"/>
+  <text class="th" x="505" y="788" text-anchor="middle" dominant-baseline="central">Structured output</text>
+  <text class="ts" x="505" y="806" text-anchor="middle" dominant-baseline="central">issuer · recipient · lineItems</text>
+</g>
+
+<!-- Final merge to DB -->
+<path d="M175 818 L278 836" class="arr" marker-end="url(#arrow)"/>
+<path d="M505 818 L402 836" class="arr" marker-end="url(#arrow)"/>
+
+<!-- Output node -->
+<g class="c-gray">
+  <rect x="200" y="836" width="280" height="44" rx="8"/>
+  <text class="th" x="340" y="858" text-anchor="middle" dominant-baseline="central">extractedDataJson → DB</text>
+</g>
+
+</svg>
