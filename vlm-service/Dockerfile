@@ -254,11 +254,18 @@ COPY mydata_fields.py    .
 COPY client_profile.py   .
 COPY dispatch_fields.py  .
 COPY vision_validator.py .
-COPY qwen3vl_engine.py   .
 #                       ^ REQUIRED: vlm_service.py imports validate_vision_extraction
 #                         from this module. Without this COPY the container crashes
 #                         at startup with ModuleNotFoundError: No module named
 #                         'vision_validator'.
+COPY qwen3vl_engine.py   .
+#                       ^ REQUIRED: vlm_service.py imports qwen3vl_engine for the
+#                         Qwen3-VL-8B sidecar dispatch + 503/truncation handling.
+# NOTE: mineru is NOT installed here. MinerU lives in its own mineru-service
+#       sidecar container (modern torch/transformers, incompatible with Surya
+#       0.6.13's pins). vlm_service.py reaches it over HTTP (MINERU_SERVICE_URL),
+#       exactly like qwen3vl and gemma. Nothing MinerU-related is needed in this
+#       image.
 # ── Runtime environment variables ─────────────────────────────────────────────
 ENV PORT=8100
                             # uvicorn listens on this port inside the container
@@ -319,6 +326,8 @@ ENV LLAMA_N_THREADS=8
                              # Set to ~half your logical CPU count for best throughput.
                              # Using all cores causes thermal throttling and hurts other processes.
                              # Check your count: (Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors
+
+# ── MinerU runs in its own sidecar (mineru-service:8700) — no MinerU config here.
 
 # ── Network ───────────────────────────────────────────────────────────────────
 EXPOSE 8100

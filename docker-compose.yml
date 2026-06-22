@@ -2,46 +2,16 @@
 #  OptimusInvoice — Full Stack Docker Compose
 #
 #  Services:
-#    app         → Node.js + React (port 3000)
-#    vlm         → Surya OCR + Qwen2.5-3B semantic + pdfplumber  (port 8300)
-#    qwen-vl     → Qwen2.5-VL-3B vision model                    (port 8400)
-#    gemma-vl    → Gemma 3 4B-it GGUF (llama.cpp)                (port 8500)
-#    mysql       → MySQL 8.0 database                            (port 3306)
+#    app            → Node.js + React (port 3000)
+#    vlm            → Surya OCR + Qwen2.5-3B semantic + pdfplumber  (port 8300)
+#    qwen-vl        → Qwen2.5-VL-3B vision model                    (port 8400)
+#    gemma-vl       → Gemma 3 4B-it GGUF (llama.cpp)                (port 8500)
+#    qwen3vl        → Qwen3-VL-8B GGUF (llama.cpp server)           (port 8600)
+#    mineru-service → MinerU reader sidecar                          (port 8700)
+#    mysql          → MySQL 8.0 database                            (port 3306)
 #
 #  Network:
 #    All services share the 'optimus_ai_net' bridge network.
-#    Inside that network, services reach each other by service name:
-#      app      → mysql:    DATABASE_URL uses host "mysql"   (not localhost)
-#      app      → vlm:      VLM_SERVICE_URL uses host "vlm"  (not localhost)
-#      vlm      → qwen-vl:  QWEN_VL_SERVICE_URL uses "qwen-vl"
-#      vlm      → gemma-vl: GEMMA_VL_SERVICE_URL uses "gemma-vl"
-#
-#  Usage:
-#    First run (downloads ~10 GB models — Qwen 7.3 GB + Gemma 3.3 GB):
-#      docker compose up --build
-#
-#    Subsequent runs (all cached):
-#      docker compose up
-#
-#    Stop everything:
-#      docker compose down
-#
-#    Rebuild a single service after code changes:
-#      docker compose up --build app
-#      docker compose up --build vlm
-#
-#    View logs:
-#      docker compose logs -f app
-#      docker compose logs -f vlm
-#      docker compose logs -f gemma-vl
-#
-#  Required prerequisites:
-#    1. Run .\Download-VlmWheels.ps1 once to pre-populate offline wheels +
-#       model cache (model_cache\) — required for the build to succeed offline.
-#    2. Set JWT_SECRET and HF_TOKEN env vars before running compose:
-#         $env:JWT_SECRET = "<your 64-char hex>"
-#         $env:HF_TOKEN   = "hf_xxxxxxxxxxxxx"   (for Gemma 3 gated model)
-#       Or use deployDockerFull.ps1 which handles this automatically.
 # =============================================================================
 
 services:
@@ -55,9 +25,9 @@ services:
       MYSQL_ROOT_PASSWORD: optimus123
       MYSQL_DATABASE: invoice_automation
     ports:
-      - "3306:3306"       # Exposed to host so MySQL Workbench / dev tools work
+      - "3306:3306"
     volumes:
-      - mysql-data:/var/lib/mysql   # Persist DB data across container recreations
+      - mysql-data:/var/lib/mysql
     networks:
       - optimus
     healthcheck:
@@ -68,10 +38,6 @@ services:
       start_period: 30s
 
   # ── VLM service (Surya OCR + Qwen2.5-3B GGUF semantic + dispatcher) ─────────
-  # This is the PRIMARY container — receives /extract-pdf requests from the app
-  # and either handles them locally (Surya + pdfplumber + semantic Qwen 2.5-3B)
-  # or proxies them to qwen-vl / gemma-vl containers when those engines are
-  # explicitly selected.
   vlm:
     build:
       context: ./vlm-service
@@ -80,86 +46,50 @@ services:
     container_name: vlm-service
     restart: unless-stopped
     ports:
-      # vlm-service/Dockerfile sets ENV PORT=8100 and runs `python app.py`.
-      # app.py reads PORT from env (default 8100) and starts uvicorn on that
-      # port. Container listens internally on 8100; host port 8300 maps to it.
-      # DO NOT change to 8300:8300 unless you also change ENV PORT=8300 in
-      # vlm-service/Dockerfile.
       - "8300:8100"
     volumes:
-      # Bind mount for model_cache so Download-VlmWheels.ps1 pre-population
-      # works seamlessly and models survive `docker compose down -v`
       - type: bind
         source: ./model_cache
         target: /models
-      # Client-profile mount is read-WRITE so the Node app (in the `app`
-      # container) can write updated profiles via clientProfile.upsert tRPC.
-      # The Python loader (client_profile.py) watches mtime and auto-reloads.
       - type: bind
         source: ./data/client_profiles
         target: /app/data/client_profiles
-      # Named volumes for Python package caches (Surya weights, llama models)
       - vlm-cache:/root/.cache
       - llama-models:/root/.cache/llama
     environment:
-      # ── Proxy URLs (other AI containers) ──────────────────────────────────
       QWEN_VL_SERVICE_URL: "http://qwen-vl:8400"
       GEMMA_VL_SERVICE_URL: "http://gemma-vl:8500"
-      QWEN3VL_SERVICE_URL: "http://qwen3vl:8600"   # NEW — Qwen3-VL-8B GGUF llama-server sidecar
-      #QWEN3VL_MAX_TOKENS: "512"   # was 768 default — caps output, trims decode time
-      QWEN3VL_DPI: "90"           # was 110 default — fewer image tokens, faster vision
-      # ── Model/cache paths inside container ────────────────────────────────
+      QWEN3VL_SERVICE_URL: "http://qwen3vl:8600"
+      MINERU_SERVICE_URL: "http://mineru-service:8700"
+      QWEN3VL_DPI: "90"
       HF_HOME: "/models"
       TORCH_HOME: "/models"
-      # ── Semantic GGUF cache location ──────────────────────────────────────
-      # Point at the bind-mounted model_cache (host: model_cache\llama\) instead
-      # of the llama-models NAMED volume. Named volumes are wiped by
-      # `docker compose down -v`, forcing a ~2 min re-download of the 2 GB GGUF
-      # on the next start. The bind mount lives on the host disk and survives -v,
-      # so the GGUF is downloaded ONCE and every future start finds it cached.
       LLAMA_CACHE_DIR: "/models/llama"
       MAX_PAGES: "10"
       SURYA_LANGS: "el,en"
-      # ── Semantic extractor tuning (Qwen2.5-3B GGUF on 12-core / 64GB RAM) ─
-      # These mirror the working configuration from deploySolutionLocal.ps1.
       SEMANTIC_ENABLED: "1"
       SEMANTIC_MODEL: "qwen2.5:3b"
-      SEMANTIC_TIMEOUT: "120"      # 2 min hard timeout
-      LLAMA_N_THREADS: "10"        # 10 of 12 cores — leaves 2 for OS + Surya
-      LLAMA_N_THREADS_BATCH: "10"  # threads for the prompt (prefill) phase — match N_THREADS
-      LLAMA_N_CTX: "4096"          # 4096 tokens — semantic prompt (~1500) + capped OCR text (~1500) exceeds 2048
-      LLAMA_N_BATCH: "512"         # process 512 tokens at once — maximises CPU throughput
-      SEMANTIC_MAX_TOKENS: "1024"  # cap semantic output — prevents runaway generation
-      # ── Client profile for METRO PoC ──────────────────────────────────────
+      SEMANTIC_TIMEOUT: "120"
+      LLAMA_N_THREADS: "10"
+      LLAMA_N_THREADS_BATCH: "10"
+      LLAMA_N_CTX: "4096"
+      LLAMA_N_BATCH: "512"
+      SEMANTIC_MAX_TOKENS: "1024"
       OPTIMUS_CLIENT_PROFILE: "/app/data/client_profiles/metro.json"
       mem_limit: 20g
     networks:
       - optimus
     healthcheck:
-      # Use Python (present in the image) instead of curl (NOT installed) — the
-      # previous curl-based check could never pass, so the container reported
-      # (unhealthy) forever and any `depends_on: service_healthy` gate hung.
-      # Runs INSIDE the container → internal port 8100, not host-facing 8300.
       test: [ "CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8100/health').status==200 else 1)" ]
       interval: 15s
       timeout: 10s
       retries: 12
-      # COLD START budget: Surya + semantic GGUF on CPU. A run was observed at
-      # ~774s (~13 min), which BLEW PAST the old 600s+grace (~720s) and made
-      # compose abort `app`. Widened to 900s start_period + 12 retries (×15s =
-      # +180s) ≈ 18 min hard ceiling, so a slow cold start never fails the deploy.
-      # The real cure is making Surya load non-blocking in vlm_service.py (done) —
-      # this wider window is the belt-and-suspenders safety net.
       start_period: 900s
     depends_on:
       mysql:
         condition: service_healthy
 
   # ── Qwen2.5-VL-3B vision service ────────────────────────────────────────────
-  # Separate container because Qwen2.5-VL-3B requires transformers>=4.52
-  # while Surya OCR (in vlm container) requires transformers==4.46.3 —
-  # these two versions cannot coexist in the same Python environment.
-  # vlm container proxies /extract-pdf requests here via HTTP.
   qwen-vl:
     build:
       context: ./qwen-vl-service
@@ -170,7 +100,6 @@ services:
     ports:
       - "8400:8400"
     volumes:
-      # Same model_cache bind mount — Qwen weights live here (~7.3 GB)
       - type: bind
         source: ./model_cache
         target: /models
@@ -186,10 +115,6 @@ services:
       QWEN_VL_DPI: "96"
       OMP_NUM_THREADS: "10"
       QWEN_VL_THREADS: "10"
-      # REVERTED 2026-06-21: bf16 is EMULATED (slower) on CPUs without AVX512-BF16,
-      # which caused the 3-4 min → very-long regression. fp32 is the known-good fast
-      # path on this box. Only set bf16 if `torch.backends.cpu.get_cpu_capability()`
-      # reports AVX512_BF16. Threads + max_pixels below are the real CPU speedups.
       QWEN_VL_DTYPE: "fp32"
       QWEN_VL_LOCAL_MAX_TOKENS: "448"
     networks:
@@ -199,12 +124,9 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 300s    # First start needs ~120-150s to load Qwen weights
+      start_period: 300s
 
   # ── Gemma 3 4B-it vision service (llama.cpp/GGUF backend) ───────────────────
-  # Q4_K_M quantization → 15x faster than bf16 transformers on CPU.
-  # Gemma 3 is a GATED model — requires HF_TOKEN to download (if cache missing).
-  # Pre-download via Download-VlmWheels.ps1 step 8 to avoid runtime download.
   gemma-vl:
     build:
       context: ./gemma-vl-service
@@ -219,49 +141,23 @@ services:
         source: ./model_cache
         target: /models
     environment:
-      # ── Model identity (Q4_K_M quant + f16 vision encoder) ────────────────
       GEMMA_VL_REPO_ID: "ggml-org/gemma-3-4b-it-GGUF"
       GEMMA_VL_MODEL_FILE: "gemma-3-4b-it-Q4_K_M.gguf"
       GEMMA_VL_MMPROJ_FILE: "mmproj-model-f16.gguf"
-      # ── Explicit GGUF paths (bypass hf_hub_download) ──────────────────────
-      # gemma_vl_engine._resolve_gguf_paths() checks these FIRST and, if the
-      # files exist, returns them directly — skipping hf_hub_download entirely.
-      # Why this is needed: hf_hub_download reads HF_HUB_CACHE (= HF_HOME/hub =
-      # /models/hub), but the real GGUF files live in the SHALLOW snapshot
-      # /models/models--ggml-org--gemma-3-4b-it-GGUF/snapshots/<hash>/ — the hub
-      # snapshot is empty. Under HF_HUB_OFFLINE=1 the hub lookup fails. Pointing
-      # straight at the verified files (2.5 GB model + 851 MB mmproj) avoids the
-      # whole cache-layout problem. Hash is the current snapshot revision.
       GEMMA_VL_MODEL_PATH: "/models/models--ggml-org--gemma-3-4b-it-GGUF/snapshots/d0976223747697cb51e056d85c532013931fe52e/gemma-3-4b-it-Q4_K_M.gguf"
       GEMMA_VL_MMPROJ_PATH: "/models/models--ggml-org--gemma-3-4b-it-GGUF/snapshots/d0976223747697cb51e056d85c532013931fe52e/mmproj-model-f16.gguf"
-      # ── Cache paths ───────────────────────────────────────────────────────
       HF_HOME: "/models"
-      # HF_HUB_OFFLINE / HF_TOKEN come from .env at runtime (set by
-      # deployDockerFull.ps1). Default is fully offline; if cache is missing
-      # and HF_TOKEN is set, the script will switch to online mode.
       HF_HUB_OFFLINE: "${GEMMA_HF_HUB_OFFLINE:-1}"
       HF_TOKEN: "${HF_TOKEN:-}"
       PORT: "8500"
       LOG_LEVEL: "INFO"
-      # ── Performance tuning (CPU-only, 12 cores, 64GB RAM) ─────────────────
-      # LLAMA_N_CTX=4096      : context window. Was tried at 2048 to speed up
-      #                         prompt processing, but real Fiverr-style PDFs
-      #                         with multi-line addresses + line items exceed
-      #                         2048 tokens — causes JSON truncation. 4096
-      #                         is the safe minimum.
-      # LLAMA_N_THREADS=10    : 10 of 12 physical cores.
-      # LLAMA_N_BATCH=512     : tokens per batch — well-tuned for CPU.
-      # GEMMA_MAX_NEW_TOKENS=1024 : output cap. Was tried at 512 but complex
-      #                            invoices truncate mid-key. 1024 leaves
-      #                            enough headroom for 10+ line-item invoices.
       mem_limit: 20g
-      LLAMA_N_THREADS: "10"           # 10 of 12 — using all 12 starves OS/IO and
-      LLAMA_N_THREADS_BATCH: "10"     # other containers, which was SLOWER. 10 is the
-      # sweet spot (leaves 2 cores for scheduling).
-      LLAMA_N_CTX: "4096"             # KEEP — don't lower, 2048 truncates JSON
-      LLAMA_N_BATCH: "1024"           # was 512 — faster prefill, you have RAM headroom
-      GEMMA_MAX_NEW_TOKENS: "512"     # was 1024 — cuts decode time
-      GEMMA_VL_DPI: "100"             # ADD — biggest gemma speed win, ~halves image tokens
+      LLAMA_N_THREADS: "10"
+      LLAMA_N_THREADS_BATCH: "10"
+      LLAMA_N_CTX: "4096"
+      LLAMA_N_BATCH: "1024"
+      GEMMA_MAX_NEW_TOKENS: "512"
+      GEMMA_VL_DPI: "100"
     networks:
       - optimus
     healthcheck:
@@ -269,14 +165,9 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 300s    # ~90s warm-cache load, ~25 min cold-cache load
+      start_period: 300s
 
   # ── Qwen3-VL-8B GGUF vision sidecar (llama.cpp server, OpenAI-compatible) ───
-  # Runs the official llama.cpp server image with the Q4_K_M GGUF + F16 mmproj.
-  # No custom Dockerfile — pulls a PINNED server build (see QWEN3VL_SETUP.md) so
-  # the multimodal KV-cache fix (issue #17200) is present. Replaces the slow
-  # fp32 qwen-vl. Files live in model_cache/qwen3vl/ (downloaded by the deploy
-  # script's wheel/model step).
   qwen3vl:
     image: ${QWEN3VL_LLAMA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-b6907}
     container_name: optimus_qwen3vl
@@ -310,7 +201,41 @@ services:
       interval: 30s
       timeout: 10s
       retries: 8
-      start_period: 240s    # GGUF mmap load on CPU
+      start_period: 240s
+
+  # ── MinerU reader sidecar (document parser → Markdown) ──────────────────────
+  mineru-service:
+    build:
+      context: ./mineru-service
+      dockerfile: Dockerfile
+    image: mineru-service
+    container_name: optimus_mineru
+    restart: unless-stopped
+    ports:
+      - "8700:8700"
+    volumes:
+      - type: bind
+        source: ./model_cache
+        target: /models
+    environment:
+      PORT: "8700"
+      LOG_LEVEL: "INFO"
+      MINERU_BACKEND: "pipeline"
+      MINERU_DEVICE_MODE: "cpu"
+      MINERU_LANG: "el"
+      HF_HOME: "/models"
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      OMP_NUM_THREADS: "8"
+      mem_limit: 16g
+    networks:
+      - optimus
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8700/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 300s
 
   # ── Node.js app (React + Express + tRPC) ────────────────────────────────────
   app:
@@ -323,78 +248,33 @@ services:
     ports:
       - "3000:3000"
     environment:
-      NODE_ENV: production  #development
+      NODE_ENV: production
       PORT: "3000"
-
-      # ── Database ────────────────────────────────────────────────────────────
-      # Use service name "mysql" — NOT localhost (that would be the app
-      # container itself, where no MySQL is running).
       DATABASE_URL: "mysql://root:optimus123@mysql:3306/invoice_automation"
-
-      # ── VLM service ─────────────────────────────────────────────────────────
-      # Use service name "vlm" — NOT localhost:8300. Internal port is 8100
-      # (the container listens on 8100 because vlm-service/Dockerfile sets
-      # ENV PORT=8100). Host port 8300 is only relevant when accessing from
-      # outside Docker.
       VLM_SERVICE_URL: "http://vlm:8100"
-
-      # ── Security ────────────────────────────────────────────────────────────
-      # IMPORTANT: override this with a strong secret in production. The
-      # deployDockerFull.ps1 script generates one via crypto.randomBytes(64).
       JWT_SECRET: "${JWT_SECRET:-change-me-in-production-generate-64-char-hex}"
-
-      # ── Engine ──────────────────────────────────────────────────────────────
-      # Default extraction engine. Override via Configuration page in the app.
-      # Valid values: surya | qwen_vl_local | gemma_vl_local | auto
-      #VLM_ENGINE: "${VLM_ENGINE:-surya}"
-      # Default engine: auto (pdfplumber for digital PDFs → semantic LLM; Surya for
-      # scanned). NOT qwen_vl_local — that fp32 vision model is being retired in
-      # favour of the faster GGUF gemma for the rare scanned-invoice case.
       VLM_ENGINE: "${VLM_ENGINE:-auto}"
-      VLM_TIMEOUT: "600000"   # 10 min — Gemma/Qwen on CPU can take 2-5 min
-
-      # ── External APIs ───────────────────────────────────────────────────────
-      # Business Portal (GEMI) Open Data — for ΑΦΜ auto-fill in client profile
+      VLM_TIMEOUT: "600000"
       BUSINESS_PORTAL_API_KEY: "${BUSINESS_PORTAL_API_KEY:-}"
-
     volumes:
-      - uploads:/app/uploads        # Persist uploaded invoice PDFs
-      # Same client_profiles bind mount as vlm container — the Node app writes
-      # profile updates here; the Python service reads them on auto-reload.
+      - uploads:/app/uploads
       - type: bind
         source: ./data/client_profiles
         target: /app/data/client_profiles
     depends_on:
       mysql:
-        condition: service_healthy    # Wait for MySQL ready before starting
+        condition: service_healthy
       vlm:
-        # service_healthy is now SAFE: the healthcheck uses Python (not the
-        # missing curl) and has a 600s start_period, so it actually passes once
-        # vlm finishes loading — instead of hanging forever as it did when the
-        # curl probe could never succeed. On a CLEAN `docker compose up` this
-        # means the worker won't process until vlm is genuinely ready.
-        #
-        # NOTE: depends_on only governs `docker compose up` ordering — it does
-        # NOT re-apply when Docker Desktop resumes containers after host sleep.
-        # That case is handled in code: classifyAndExtract → requireVlmReady()
-        # throws VlmNotReadyError and the queue worker DEFERS the invoice
-        # (re-queue, no retry penalty) until vlm is ready. Both layers together
-        # mean no invoice ever fails just because vlm is still warming up.
         condition: service_healthy
     networks:
       - optimus
 
-# ── Persistent volumes ────────────────────────────────────────────────────────
 volumes:
-  mysql-data:       # MySQL data files (survives `docker compose down`)
-  vlm-cache:        # Python package cache for vlm container
-  llama-models:     # llama.cpp model cache (Qwen2.5-3B GGUF)
-  uploads:          # Uploaded invoice PDFs
+  mysql-data:
+  vlm-cache:
+  llama-models:
+  uploads:
 
-# ── Network ───────────────────────────────────────────────────────────────────
-# Named "optimus_ai_net" to match docker-compose.vlm.yml — allows dev workflow
-# where the user runs `pnpm dev` on host (deploySolutionLocal.ps1) and the AI
-# containers stay reachable across both compose files.
 networks:
   optimus:
     external: true

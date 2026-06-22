@@ -18,3 +18,11 @@ Pillow>=10.0.0
 
 # Text-based PDF extraction (pre-flight before Surya OCR)
 pdfplumber>=0.11.0
+# ── MinerU pipeline reader (OPTIONAL — pure-CPU document parser) ─────────────
+# NOTE: MinerU pulls a heavy torch-based dependency tree and is NOT installed
+# from the offline wheel set (--no-index) to avoid version conflicts with the
+# pinned Surya/transformers stack (dependency-isolation rule). Install it
+# separately/online if you want the `mineru` engine:
+#     pip install -U "mineru[core]"
+# If absent, the `mineru` engine falls back to Surya automatically.
+# mineru[core]>=2.0

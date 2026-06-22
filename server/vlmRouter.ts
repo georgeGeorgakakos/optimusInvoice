@@ -38,6 +38,8 @@ const ALL_ENGINES: Record<string, { type: "local" | "vllm" }> = {
   qwen_vl:        { type: "vllm"  },
   qwen_vl_local:  { type: "local" },
   gemma_vl_local: { type: "local" },   // NEW — Gemma 3 vision container
+  qwen3vl_local:  { type: "local" },   // Qwen3-VL-8B GGUF llama-server sidecar
+  mineru:         { type: "local" },   // NEW — MinerU pipeline backend (CPU) → Markdown → semantic
 };
 
 export const vlmRouter = router({

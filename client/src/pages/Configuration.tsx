@@ -264,6 +264,7 @@ function VlmStatusPanel() {
     qwen_vl_local: "Qwen2.5-VL-3B",
     gemma_vl_local: "Gemma 3 4B",       // NEW — parallel container :8500
     qwen3vl_local: "Qwen3-VL-8B",       // NEW — Q5_K_M GGUF llama-server sidecar :8600
+    mineru: "MinerU (pipeline)",         // NEW — CPU document parser → Markdown → semantic
   };
 
   if (isLoading) {
@@ -980,6 +981,10 @@ export default function Configuration() {
                   <option value="qwen3vl_local">
                     Qwen3-VL-8B — newest vision model, GGUF (faster than fp32, CPU)
                   </option>
+                  {/* NEW — MinerU pipeline backend (pure CPU) → Markdown → semantic_extractor */}
+                  <option value="mineru">
+                    MinerU — CPU document parser → Markdown → semantic (reader, not vision-to-JSON)
+                  </option>
                   <option value="got_ocr2" disabled style={{color:"#94a3b8"}}>
                     GOT-OCR2 — not available (conflicts with transformers 4.52)
                   </option>
@@ -1017,6 +1022,14 @@ export default function Configuration() {
                     key: "gemma_vl_local",
                     label: "Gemma 3 4B-it",
                     desc: "Google vision model — reads invoice image directly, outputs structured JSON. Local CPU. 60–90s. Requires HuggingFace license acceptance + HF_TOKEN in .env.",
+                    tag: "local",
+                    available: true,
+                  },
+                  // NEW — MinerU pipeline backend (pure CPU document reader)
+                  {
+                    key: "mineru",
+                    label: "MinerU (pipeline)",
+                    desc: "Document parser — converts the PDF to Markdown (tables as HTML), then the semantic extractor maps it to the invoice schema. Reader, not vision-to-JSON. Pure CPU, hallucination-free. Run: pip install \"mineru[core]\".",
                     tag: "local",
                     available: true,
                   },

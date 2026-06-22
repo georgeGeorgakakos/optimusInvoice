@@ -57,6 +57,7 @@ QWEN_VL_SERVICE_URL   = os.getenv("QWEN_VL_SERVICE_URL",  "http://qwen-vl-servic
 GEMMA_VL_LOCAL_MODEL  = os.getenv("GEMMA_VL_LOCAL_MODEL", "google/gemma-3-4b-it")
 GEMMA_VL_SERVICE_URL  = os.getenv("GEMMA_VL_SERVICE_URL", "http://gemma-vl-service:8500")  # separate container
 QWEN3VL_SERVICE_URL   = os.getenv("QWEN3VL_SERVICE_URL",  "http://qwen3vl:8600")            # llama-server sidecar
+MINERU_SERVICE_URL    = os.getenv("MINERU_SERVICE_URL",   "http://mineru-service:8700")     # MinerU reader sidecar
 
 # ── HTML tag stripper (Surya sometimes emits <b>text</b>) ────────────────────
 _HTML_TAG_RE = re.compile(r'<[^>]+>')
@@ -269,6 +270,7 @@ class Engine(str, Enum):
     qwen_vl_local  = "qwen_vl_local"    # local CPU — no vLLM required
     gemma_vl_local = "gemma_vl_local"   # local CPU — Gemma 3 4B-it
     qwen3vl_local  = "qwen3vl_local"    # local CPU — Qwen3-VL-8B Q5_K_M GGUF via llama-server sidecar
+    mineru         = "mineru"           # local CPU — MinerU pipeline backend → Markdown → semantic_extractor
     auto           = "auto"
 
 
@@ -369,6 +371,51 @@ async def _proxy_vision_container(
             _resp.raise_for_status()
             return _resp.json()
     raise RuntimeError(f"{container_label} model did not become ready within 5 minutes")
+
+
+async def _proxy_mineru_reader(pdf_bytes: bytes, filename: str) -> str:
+    """
+    Proxy to the mineru-service sidecar (port 8700) and return Markdown.
+
+    Unlike the vision containers, MinerU is a READER: it returns Markdown, not an
+    invoice schema. The caller feeds that Markdown to the LOCAL semantic_extractor
+    (same as the pdfplumber/Surya paths). Returns "" on any failure so the caller
+    can fall back to Surya. Handles 503 (model still loading) with a retry loop.
+    """
+    url = f"{MINERU_SERVICE_URL}/extract-pdf"
+    log.info(f"[MinerU-Proxy] Forwarding {len(pdf_bytes)} bytes to {url}")
+    try:
+        async with httpx.AsyncClient(timeout=1800.0) as _client:
+            for _attempt in range(30):
+                _resp = await _client.post(
+                    url,
+                    files={"file": (filename or "invoice.pdf", pdf_bytes, "application/pdf")},
+                    data={"engine": "mineru", "language": "el"},
+                )
+                if _resp.status_code == 503:
+                    log.info(f"[MinerU-Proxy] Model still loading (attempt {_attempt+1}/30) — retrying in 10s ...")
+                    await asyncio.sleep(10)
+                    continue
+                _resp.raise_for_status()
+                _data = _resp.json()
+                return _data.get("markdown") or _data.get("text") or ""
+        log.warning("[MinerU-Proxy] sidecar did not become ready within 5 minutes")
+        return ""
+    except Exception as exc:  # noqa: BLE001
+        log.error(f"[MinerU-Proxy] failed: {exc}", exc_info=True)
+        return ""
+
+
+async def _mineru_available() -> bool:
+    """Quick /health probe of the mineru-service sidecar (used by auto-routing)."""
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as _client:
+            _resp = await _client.get(f"{MINERU_SERVICE_URL}/health")
+            if _resp.status_code == 200:
+                return bool(_resp.json().get("ready"))
+    except Exception:  # noqa: BLE001
+        pass
+    return False
 
 
 # --------------------------- engine implementations -------------------------
@@ -601,10 +648,16 @@ async def health():
     # gemma_vl_local live in separate containers — always advertise them as
     # available here so the dispatcher routes get tried (the remote service
     # will return 503 while its own model loads).
+    # Local-engine availability: surya is loaded in-process; qwen_vl_local,
+    # gemma_vl_local, qwen3vl_local, and mineru all live in separate containers.
+    # We always advertise mineru (like the other sidecars) — the mineru-service
+    # container returns 503 while loading and the dispatcher falls back to Surya
+    # if it's unreachable. The real availability shows in the UI once /health on
+    # the sidecar is wired, but advertising here lets the route be attempted.
     return {
         "status":        "ok",
         "device":        DEVICE,
-        "loaded_models": list(_models.keys()) + ["qwen_vl_local", "gemma_vl_local", "qwen3vl_local"],
+        "loaded_models": list(_models.keys()) + ["qwen_vl_local", "gemma_vl_local", "qwen3vl_local", "mineru"],
         "vllm_url":      VLLM_BASE_URL,
         "semantic_llm":  semantic_status,
         "semantic_model": SEMANTIC_MODEL if SEMANTIC_ENABLED else None,
@@ -726,9 +779,27 @@ async def _do_extract_pdf(file, engine, doc_type, extract_invoice, use_native_te
                 ocr_text    = _plumber_text
                 used_engine = "pdfplumber"
             else:
-                log.info("extract-pdf: pdfplumber found no text — PDF is scanned, running Surya OCR")
+                log.info("extract-pdf: pdfplumber found no text — PDF is scanned")
+                # Prefer MinerU (better tables, hallucination-free) for scanned
+                # docs when the mineru-service sidecar is up; otherwise fall back
+                # to Surya. Digital PDFs never reach here (handled by pdfplumber).
+                if await _mineru_available():
+                    log.info("extract-pdf: routing scanned PDF to MinerU sidecar")
+                    used_engine = "mineru"
+                else:
+                    log.info("extract-pdf: MinerU sidecar not ready — using Surya OCR")
         except Exception as _plumber_exc:
             log.warning(f"pdfplumber pre-flight failed: {_plumber_exc}")
+
+        # ── MinerU reader via sidecar (auto-selected for scanned docs) ────────
+        if used_engine == "mineru" and not ocr_text:
+            _md = await _proxy_mineru_reader(pdf_bytes, file.filename or "invoice.pdf")
+            if _md and len(_md.strip()) > 20:
+                ocr_text = _md
+                log.info(f"[MinerU] {len(_md)} chars of Markdown from sidecar")
+            else:
+                log.warning("[MinerU] empty/failed sidecar output — falling back to Surya")
+                used_engine = "surya"
 
         # ── Surya (runs when pdfplumber disabled or found no text) ────────────
         if not ocr_text:
@@ -749,6 +820,41 @@ async def _do_extract_pdf(file, engine, doc_type, extract_invoice, use_native_te
                 error_msg = str(exc)
                 # Surface the real error so Node can log it meaningfully
                 log.error(f"PDF details: {len(pdf_bytes)} bytes, first 4 bytes: {pdf_bytes[:4]}")
+
+    # --- MinerU pipeline reader (pure-CPU) → Markdown → semantic_extractor ---
+    # MinerU is a *reader*: it converts the PDF to Markdown (tables as HTML,
+    # reading-order text). The Markdown flows into ocr_text exactly like Surya's
+    # output, and the existing semantic_extractor below maps it to the invoice
+    # schema. Falls back to Surya if MinerU isn't installed or produces nothing.
+    elif used_engine == "mineru":
+        # Explicit MinerU selection → call the mineru-service sidecar (port 8700).
+        # MinerU is a reader; the returned Markdown is fed to the local
+        # semantic_extractor below (same as Surya/pdfplumber paths).
+        _md = await _proxy_mineru_reader(pdf_bytes, file.filename or "invoice.pdf")
+        if _md and len(_md.strip()) > 20:
+            ocr_text    = _md
+            used_engine = "mineru"
+            log.info(f"[MinerU] {len(_md)} chars of Markdown from sidecar")
+        else:
+            log.warning("[MinerU] empty/failed sidecar output — falling back to Surya")
+            used_engine = "surya"
+
+        # Surya fallback when MinerU was unavailable/empty/failed.
+        if used_engine == "surya" and not ocr_text:
+            try:
+                from pdf2image import convert_from_bytes
+                images = convert_from_bytes(pdf_bytes, dpi=200)
+                parts  = []
+                for img in images[:MAX_PAGES]:
+                    buf = io.BytesIO()
+                    img.save(buf, format="PNG")
+                    img_b64 = base64.b64encode(buf.getvalue()).decode()
+                    res = _run_surya(img_b64, "el")
+                    parts.append(res.get("text", ""))
+                ocr_text = "\n\n".join(p for p in parts if p)
+            except Exception as exc:
+                log.error(f"Surya fallback failed: {exc}", exc_info=True)
+                error_msg = str(exc)
 
     # --- GOT-OCR2 path ---
     elif used_engine == "got_ocr2":
@@ -894,6 +1000,7 @@ async def _do_extract_pdf(file, engine, doc_type, extract_invoice, use_native_te
         "extraction_method": (
             "native_text"  if used_engine == "pdfplumber" else
             "ocr_image"    if used_engine in ("surya", "got_ocr2") else
+            "markdown"     if used_engine == "mineru" else
             "vlm"          if used_engine in ("qwen_vl", "olmocr", "qwen_vl_local", "gemma_vl_local") else
             "converted"    if used_engine == "marker" else
             "unknown"
