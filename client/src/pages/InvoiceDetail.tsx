@@ -77,6 +77,12 @@ const TRANSLATIONS = {
     dualPassOcr:      "Dual-pass OCR on scanned documents can take 2-3 minutes...",
     downloadingLang:  "First-time OCR downloads language data (~15MB)...",
 
+    // Non-invoice banner
+    notAnInvoiceTitle:"This document is not an invoice",
+    notAnInvoiceBody: "It was classified as a different document type, so invoice fields were not extracted.",
+    classifiedAs:     "Classified as",
+    overrideHint:     "If this is wrong, reprocess or change the document type.",
+
     // Card titles
     issuer:           "Issuer",
     recipient:        "Recipient",
@@ -261,6 +267,12 @@ const TRANSLATIONS = {
     stillWorking:     "Επεξεργασία σε εξέλιξη — τα σύνθετα έγγραφα παίρνουν χρόνο...",
     dualPassOcr:      "Το διπλό πέρασμα OCR σε σαρωμένα έγγραφα διαρκεί 2-3 λεπτά...",
     downloadingLang:  "Πρώτη φορά: γίνεται λήψη γλωσσικών δεδομένων OCR (~15MB)...",
+
+    // Non-invoice banner
+    notAnInvoiceTitle:"Αυτό το έγγραφο δεν είναι τιμολόγιο",
+    notAnInvoiceBody: "Ταξινομήθηκε ως διαφορετικός τύπος εγγράφου, οπότε δεν εξήχθησαν πεδία τιμολογίου.",
+    classifiedAs:     "Ταξινομήθηκε ως",
+    overrideHint:     "Αν είναι λάθος, κάντε επανεπεξεργασία ή αλλάξτε τον τύπο εγγράφου.",
 
     // Card titles
     issuer:           "Εκδότης",
@@ -738,6 +750,13 @@ export default function InvoiceDetail() {
   };
   const dtLabel = docTypeLabels[docType] || docTypeLabels.invoice;
 
+  // Doc types that have their OWN dedicated full view (invoice/credit_note share
+  // the rich invoice view; cmr/dispatch_note render their own sections). Anything
+  // NOT in this set is a non-invoice that fell through to the generic view — we
+  // show an explanatory banner instead of a silent empty form.
+  const INVOICE_LIKE_TYPES = new Set(["invoice", "credit_note", "cmr", "dispatch_note"]);
+  const isNonInvoiceDoc = !INVOICE_LIKE_TYPES.has(docType);
+
   const matchQuery = trpc.products.match.useQuery(
       {
         supplierName:  extractedData.supplierName || "Unknown",
@@ -1090,6 +1109,44 @@ export default function InvoiceDetail() {
                     </Button>
                 )}
           </div>
+
+          {/* ═══ NON-INVOICE BANNER ═══
+              Shown when the classifier tagged the document as something other
+              than an invoice-like type (cheque, statement, receipt, unknown…).
+              Explains why no invoice fields were extracted instead of leaving
+              the user staring at an empty form. Reads docType / dtLabel /
+              confidence that are already computed above — no backend change. */}
+          {isNonInvoiceDoc && !isProcessing && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+                <div className="h-9 w-9 rounded-lg bg-amber-100 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="h-4 w-4 text-amber-600" />
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-amber-800">
+                    {t("notAnInvoiceTitle")}
+                  </p>
+                  <p className="text-xs text-amber-700 mt-0.5">
+                    {t("notAnInvoiceBody")}
+                  </p>
+                  <div className="flex items-center gap-2 mt-2 flex-wrap">
+                    <span className="text-[10px] text-amber-600 uppercase tracking-wide font-semibold">
+                      {t("classifiedAs")}:
+                    </span>
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${dtLabel.bg} ${dtLabel.color}`}>
+                      {dtLabel.label}
+                    </span>
+                    {(extractedData.confidence != null || extractedData.classificationConfidence != null) && (
+                        <span className="text-[10px] font-mono text-amber-500">
+                          {extractedData.confidence ?? extractedData.classificationConfidence}%
+                        </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-amber-500 mt-2">
+                    {t("overrideHint")}
+                  </p>
+                </div>
+              </div>
+          )}
 
           {/* ═══ PROCESSING PROGRESS (real worker status) ═══ */}
           {isProcessing && (() => {

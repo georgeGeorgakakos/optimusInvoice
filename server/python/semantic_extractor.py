@@ -32,6 +32,82 @@ from typing import Any, Dict, Optional
 
 log = logging.getLogger("semantic_extractor")
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ── MinerU HTML-table flattener ──────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# MinerU's pipeline backend emits tabular data (line items, totals) as HTML
+# tables, e.g.:
+#     <table><tr><td rowspan=1 colspan=4>ΕΙΔΟΣ</td>...</tr>
+#            <tr><td>ΕΙΔ0000003</td><td>ΕΠΑΓΓΕΛΜΑΤΙΚΕΣ ΚΑΡΤΕΣ</td><td>TEM</td>
+#                <td>300</td><td>0,100</td>...</tr></table>
+#
+# The rowspan/colspan markup is enormous token bloat: a 5-value row becomes
+# ~200 chars of HTML. On a small CPU LLM this (a) wastes the limited context
+# window so the TOTALS rows at the bottom get cut by the char cap, and (b)
+# buries the actual values under attribute noise so the model extracts nothing
+# (observed: 0 line items, €0 totals on a valid Greek τιμολόγιο).
+#
+# This flattener converts each <table> into clean pipe-delimited rows the
+# semantic extractor already reads well (same shape as columnar pdfplumber
+# output):
+#     ΕΙΔ0000003 | ΕΠΑΓΓΕΛΜΑΤΙΚΕΣ ΚΑΡΤΕΣ | TEM | 300 | 0,100 | ...
+#
+# Surya/pdfplumber output contains NO <table> tags, so flatten_html_tables()
+# is a no-op for those engines — the MinerU path is the only one affected.
+
+def _flatten_one_table(table_html: str) -> str:
+    """Convert a single <table>...</table> block to pipe-delimited text rows."""
+    rows_out = []
+    # Each <tr>...</tr> is one row
+    for tr in re.findall(r'<tr[^>]*>(.*?)</tr>', table_html, re.DOTALL | re.IGNORECASE):
+        cells = []
+        # Each <td ...>value</td> (or <th>) is one cell; ignore the attributes
+        for cell in re.findall(r'<t[dh][^>]*>(.*?)</t[dh]>', tr, re.DOTALL | re.IGNORECASE):
+            # Strip any nested tags (e.g. <br>, <b>) and collapse whitespace
+            txt = re.sub(r'<[^>]+>', ' ', cell)
+            txt = re.sub(r'\s+', ' ', txt).strip()
+            cells.append(txt)
+        # Drop fully-empty rows; join non-empty cells with " | "
+        if any(c for c in cells):
+            rows_out.append(" | ".join(cells))
+    return "\n".join(rows_out)
+
+
+def flatten_html_tables(text: str) -> str:
+    """
+    Replace every <table>...</table> block in `text` with a flattened,
+    pipe-delimited plain-text version. Non-table text is left untouched.
+    No-op when the text contains no <table> tags (Surya/pdfplumber paths).
+
+    MinerU emits line items / totals as HTML tables whose rowspan/colspan markup
+    (a) wastes the small CPU LLM's context window so the TOTALS rows get cut by
+    the char cap, and (b) buries the actual values under attribute noise
+    (observed: 0 line items + €0 totals on a valid τιμολόγιο). Flattening to
+    "val | val | val" rows gives the extractor the columnar format it already
+    reads well.
+    """
+    if not text or "<table" not in text.lower():
+        return text
+    try:
+        def _repl(m):
+            # Surround with newlines so it reads as its own block
+            return "\n" + _flatten_one_table(m.group(0)) + "\n"
+        out = re.sub(r'<table[^>]*>.*?</table>', _repl, text,
+                     flags=re.DOTALL | re.IGNORECASE)
+        # Also strip any stray markdown image embeds MinerU adds (![](....jpg))
+        # — they carry no invoice data and waste context budget.
+        out = re.sub(r'!\[\]\([^)]*\)', '', out)
+        # Collapse the blank lines the removals leave behind
+        out = re.sub(r'\n{3,}', '\n\n', out)
+        log.info(f"[Semantic] Flattened HTML table(s): {len(text)} → {len(out)} chars")
+        return out
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"[Semantic] HTML table flatten failed (using raw text): {e}")
+        return text
+
+
 # ── Configuration ─────────────────────────────────────────────────────────────
 SEMANTIC_ENABLED  = os.getenv("SEMANTIC_ENABLED", "1") == "1"
 SEMANTIC_MODEL    = os.getenv("SEMANTIC_MODEL", "qwen2.5:3b")
@@ -495,8 +571,18 @@ class SemanticExtractor:
 
     def _run_inference(self, text: str) -> str:
         """Run the GGUF model and return the raw JSON string."""
-        # Cap text at ~5000 chars to stay within context window
-        capped = text[:5000]
+        # MinerU emits line items/totals as HTML tables — flatten them to clean
+        # pipe-delimited rows first. This both (a) removes rowspan/colspan bloat
+        # so the totals rows fit under the cap, and (b) gives the LLM the
+        # columnar format it extracts reliably. No-op for Surya/pdfplumber text
+        # (which contains no <table> tags), so the existing paths are unaffected.
+        text = flatten_html_tables(text)
+        # Cap text to stay within the context window. Raised 5000 → 8000 because
+        # n_ctx is 4096 tokens (~12-16k chars of mixed Greek/Latin) and the old
+        # 5000-char cap was truncating multi-section invoices BEFORE the totals
+        # block at the bottom — the single most important data to extract. The
+        # flatten step above frees enough budget that the totals now survive.
+        capped = text[:8000]
         prompt = EXTRACTION_PROMPT.replace("{TEXT}", capped)
 
         # Use chat completion format (works for all instruct models)
