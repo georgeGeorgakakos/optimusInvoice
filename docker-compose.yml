@@ -62,7 +62,8 @@ services:
       QWEN3VL_SERVICE_URL: "http://qwen3vl:8600"
       QWEN35_SERVICE_URL: "http://qwen35:8800"
       MINERU_SERVICE_URL: "http://mineru-service:8700"
-      QWEN3VL_DPI: "90"
+      #QWEN3VL_DPI: "90"
+      QWEN3VL_DPI: "85"
       HF_HOME: "/models"
       TORCH_HOME: "/models"
       LLAMA_CACHE_DIR: "/models/llama"
@@ -229,16 +230,15 @@ services:
       --host 0.0.0.0
       --port 8800
       --ctx-size 4096
-      --threads 10
+      --threads 12
       --parallel 1
       --no-mmproj-offload
       --no-mmap
       --temp 0.1
       --top-k 20
       --top-p 0.8
-      -n 2048
-      --jinja
-      --chat-template-kwargs '{"enable_thinking":false}'
+      --n 2048
+      --reasoning off
     ports:
       - "8800:8800"
     networks:

@@ -133,9 +133,9 @@ Required JSON structure:
   "totals": { "subtotal": 0.00, "vat": 0.00, "total": 0.00, "payable": 0.00 },
   "withholdingTax": null,
 
-  "mark": "myDATA MARK or null",
-  "uid": "myDATA UID or null",
-  "authenticationCode": "myDATA auth code or null",
+  "mark": "the actual MARK digit string read from the document (a long number under the 'MARK' or 'ΜΑΡΚ' label, e.g. 400013377908872), or null if absent. Do NOT output the words 'myDATA MARK' — output the digits.",
+  "uid": "the actual myDATA UID value read from the document, or null. Do NOT output the word 'UID' — output the value.",
+  "authenticationCode": "the actual myDATA authentication code read from the document, or null. Do NOT output a label — output the value.",
   "provider": "e-invoicing provider or null",
   "dispatchDate": "YYYY-MM-DD or null",
   "vehicleNumber": "plate or null",
