@@ -10,6 +10,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { trpc } from "@/lib/trpc";
+import ProcessingTimeline from "@/components/ProcessingTimeline";
 import {
   ArrowLeft,
   FileText,
@@ -1280,6 +1281,19 @@ export default function InvoiceDetail() {
                 </div>
               </div>
           )}
+
+          {/* ═══ PROCESSING TIMELINE (live extraction trace) ═══ */}
+          {(() => {
+            const sj = (invoice as any)?.processingSteps as string | undefined;
+            let hasSteps = false;
+            try { hasSteps = Array.isArray(JSON.parse(sj || "[]")) && JSON.parse(sj || "[]").length > 0; } catch {}
+            if (!hasSteps && !isProcessing) return null;
+            return (
+              <div className="bg-white rounded-xl border border-slate-200 p-4">
+                <ProcessingTimeline stepsJson={sj} status={invoice.status} />
+              </div>
+            );
+          })()}
 
           {/* ═══ MATCHING PROGRESS BAR ═══ */}
           {invoice.status === "review_needed" && totalCount > 0 && (

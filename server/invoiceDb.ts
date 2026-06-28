@@ -1479,6 +1479,53 @@ export async function setInvoiceProgress(invoiceId: number, progress: string) {
         .where(eq(invoices.id, invoiceId));
 }
 
+/** One structured pipeline step shown in the ProcessingTimeline component. */
+export interface ProcessingStep {
+    stage: string;        // "Engine routing", "OCR / reader", "Vision → JSON", ...
+    engine?: string;      // engine responsible for this stage, if any
+    path?: "a" | "b";     // a = OCR→semantic, b = vision→JSON
+    status: "running" | "done" | "skipped" | "error";
+    reasoning?: string;   // the WHY — e.g. "pdfplumber: 12 chars → scanned → surya"
+    at: string;           // ISO timestamp
+}
+
+/**
+ * Append (or update) a step in invoices.processingSteps (best-effort, non-throwing).
+ * If a step with the same `stage` already exists it is replaced — so a stage can
+ * go running → done without duplicating. Drives the live timeline UI.
+ */
+export async function appendInvoiceStep(invoiceId: number, step: ProcessingStep) {
+    const db = await getDb();
+    if (!db) return;
+    try {
+        const [row] = await db
+            .select({ steps: invoices.processingSteps })
+            .from(invoices)
+            .where(eq(invoices.id, invoiceId))
+            .limit(1);
+        let steps: ProcessingStep[] = [];
+        if (row?.steps) { try { steps = JSON.parse(row.steps as any) || []; } catch { steps = []; } }
+        const idx = steps.findIndex(s => s.stage === step.stage);
+        if (idx >= 0) steps[idx] = step; else steps.push(step);
+        await db
+            .update(invoices)
+            .set({ processingSteps: JSON.stringify(steps).slice(0, 65000) } as any)
+            .where(eq(invoices.id, invoiceId));
+    } catch { /* timeline is best-effort; never fail the pipeline over it */ }
+}
+
+/** Clear the timeline at the start of a (re)processing run. */
+export async function resetInvoiceSteps(invoiceId: number) {
+    const db = await getDb();
+    if (!db) return;
+    try {
+        await db
+            .update(invoices)
+            .set({ processingSteps: JSON.stringify([]) } as any)
+            .where(eq(invoices.id, invoiceId));
+    } catch { /* best-effort */ }
+}
+
 /** Record which extraction engine ran (shown in the queue/detail UI). */
 export async function setInvoiceEngine(invoiceId: number, engine: string) {
     const db = await getDb();

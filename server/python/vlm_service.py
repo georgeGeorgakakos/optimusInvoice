@@ -59,6 +59,11 @@ GEMMA_VL_SERVICE_URL  = os.getenv("GEMMA_VL_SERVICE_URL", "http://gemma-vl-servi
 QWEN3VL_SERVICE_URL   = os.getenv("QWEN3VL_SERVICE_URL",  "http://qwen3vl:8600")            # llama-server sidecar
 MINERU_SERVICE_URL    = os.getenv("MINERU_SERVICE_URL",   "http://mineru-service:8700")     # MinerU reader sidecar
 
+# When engine == "auto" and pdfplumber finds no text layer (scanned PDF), which
+# engine handles it. Valid: "surya" (in-process OCR, default) | "mineru" (sidecar
+# reader → Markdown). Set AUTO_SCANNED_ENGINE=mineru to restore MinerU preference.
+AUTO_SCANNED_ENGINE   = os.getenv("AUTO_SCANNED_ENGINE", "surya").strip().lower()
+
 # ── HTML tag stripper (Surya sometimes emits <b>text</b>) ────────────────────
 _HTML_TAG_RE = re.compile(r'<[^>]+>')
 
@@ -748,9 +753,11 @@ async def _do_extract_pdf(file, engine, doc_type, extract_invoice, use_native_te
     b64       = base64.b64encode(pdf_bytes).decode()
 
     used_engine = engine if engine != "auto" else "surya"
+    is_auto     = (engine == "auto")   # True only when caller asked for auto-routing
     ocr_text    = ""
     error_msg   = None
     elapsed     = 0.0  # initialized here; updated per-engine branch
+    reasoning   = f"engine requested: {engine}"  # human-readable routing trace for the UI timeline
 
     # --- Surya path (default) ---
     if used_engine in ("surya", "auto"):
@@ -778,16 +785,22 @@ async def _do_extract_pdf(file, engine, doc_type, extract_invoice, use_native_te
                 log.info(f"extract-pdf: pdfplumber auto-detected digital PDF — {len(_plumber_text)} chars (skipping Surya OCR)")
                 ocr_text    = _plumber_text
                 used_engine = "pdfplumber"
+                reasoning   = f"pdfplumber: {len(_plumber_text.strip())} chars (>50) → digital PDF → pdfplumber (no OCR)"
             else:
                 log.info("extract-pdf: pdfplumber found no text — PDF is scanned")
-                # Prefer MinerU (better tables, hallucination-free) for scanned
-                # docs when the mineru-service sidecar is up; otherwise fall back
-                # to Surya. Digital PDFs never reach here (handled by pdfplumber).
-                if await _mineru_available():
-                    log.info("extract-pdf: routing scanned PDF to MinerU sidecar")
+                # Scanned-PDF routing. Only auto mode is allowed to switch engines
+                # here. If the caller EXPLICITLY chose surya, respect it — never
+                # silently redirect to MinerU. In auto mode, AUTO_SCANNED_ENGINE
+                # (default "surya") decides; MinerU is used only when opted in AND up.
+                _nchars = len(_plumber_text.strip())
+                if is_auto and AUTO_SCANNED_ENGINE == "mineru" and await _mineru_available():
+                    log.info("extract-pdf: auto routing scanned PDF to MinerU sidecar")
                     used_engine = "mineru"
+                    reasoning   = f"pdfplumber: {_nchars} chars (<50) → scanned; auto + AUTO_SCANNED_ENGINE=mineru → MinerU"
                 else:
-                    log.info("extract-pdf: MinerU sidecar not ready — using Surya OCR")
+                    log.info(f"extract-pdf: scanned PDF → Surya OCR (auto={is_auto}, AUTO_SCANNED_ENGINE={AUTO_SCANNED_ENGINE})")
+                    used_engine = "surya"
+                    reasoning   = f"pdfplumber: {_nchars} chars (<50) → scanned → Surya OCR (auto={is_auto})"
         except Exception as _plumber_exc:
             log.warning(f"pdfplumber pre-flight failed: {_plumber_exc}")
 
@@ -915,6 +928,7 @@ async def _do_extract_pdf(file, engine, doc_type, extract_invoice, use_native_te
                 "text":         ocr_text,   # alias for compatibility
                 "structured":   structured,
                 "engines_used": ["qwen_vl_local"],
+                "reasoning":    "engine=qwen_vl_local → Path B (vision model returns structured JSON directly; semantic step skipped)",
                 "elapsed":      elapsed,
                 "engine":       "qwen_vl_local",
             }
@@ -954,6 +968,7 @@ async def _do_extract_pdf(file, engine, doc_type, extract_invoice, use_native_te
                 "text":         ocr_text,
                 "structured":   structured,
                 "engines_used": ["qwen3vl_local"],
+                "reasoning":    "engine=qwen3vl_local → Path B (vision model returns structured JSON directly; semantic step skipped)",
                 "elapsed":      elapsed,
                 "engine":       "qwen3vl_local",
             }
@@ -984,6 +999,7 @@ async def _do_extract_pdf(file, engine, doc_type, extract_invoice, use_native_te
                 "text":         ocr_text,   # alias for compatibility
                 "structured":   structured,
                 "engines_used": ["gemma_vl_local"],
+                "reasoning":    "engine=gemma_vl_local → Path B (vision model returns structured JSON directly; semantic step skipped)",
                 "elapsed":      elapsed,
                 "engine":       "gemma_vl_local",
             }
@@ -1008,6 +1024,7 @@ async def _do_extract_pdf(file, engine, doc_type, extract_invoice, use_native_te
         "elapsed_seconds": elapsed,
         "total_pages":     None,
         "error":           error_msg,
+        "reasoning":       reasoning,
     }
 
     # --- Structured invoice extraction ---

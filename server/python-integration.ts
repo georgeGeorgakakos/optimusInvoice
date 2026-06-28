@@ -413,6 +413,7 @@ async function getVlmOcrText(
     const bestText: string = result.ocr_text || "";
     const bestEngine: string = (result.engines_used || [engine])[0] || engine;
     const extractionMethod: string = result.extraction_method || "unknown";
+    const reasoning: string = result.reasoning || "";
     const structured = result.invoice || result.structured || null; // ← pick up parsed invoice
 
     if (bestText.trim().length > 50) {
@@ -435,6 +436,7 @@ async function getVlmOcrText(
         text: bestText,
         engine: bestEngine,
         extractionMethod,
+        reasoning,
         totalPages,
         allResults,
         structured,
@@ -1007,6 +1009,7 @@ export async function classifyAndExtract(
     _vlm_used: true,
     _vlm_engine: vlmResult.engine,
     _vlm_extraction_method: (vlmResult as any).extractionMethod ?? "unknown",
+    _vlm_reasoning: (vlmResult as any).reasoning ?? "",
     _vlm_raw_text: vlmResult.text,
     _vlm_structured: vlmResult.structured ?? null,
   };

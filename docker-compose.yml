@@ -168,6 +168,7 @@ services:
       start_period: 300s
 
   # ── Qwen3-VL-8B GGUF vision sidecar (llama.cpp server, OpenAI-compatible) ───
+  # --no-mmap forces a full upfront load into RAM — slower to start, but then it's actually resident and inference proceeds
   qwen3vl:
     image: ${QWEN3VL_LLAMA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-b6907}
     container_name: optimus_qwen3vl
@@ -188,6 +189,7 @@ services:
       --threads 10
       --parallel 1
       --no-mmproj-offload
+      --no-mmap
       --temp 0.2
       --top-k 20
       --top-p 0.8

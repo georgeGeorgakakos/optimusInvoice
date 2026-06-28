@@ -115,6 +115,13 @@ export const invoices = mysqlTable("invoices", {
   // Lower number = higher priority for the worker claim order. Default 100.
   // Reserved for future "process this one first" UX; FIFO within same priority.
   priority: int("priority").default(100).notNull(),
+  // ── Live processing timeline ───────────────────────────────────────────────
+  // JSON array of structured pipeline steps the worker appends as it runs, e.g.
+  //   [{ stage, engine, path, status, reasoning, at }]
+  // Drives the ProcessingTimeline component on the Invoice Details page so the
+  // user sees each stage, which engine ran, and WHY a route was chosen — live.
+  // Distinct from `progress` (a single human-readable line); this is the full trace.
+  processingSteps: text("processingSteps"),
 });
 
 export type Invoice = typeof invoices.$inferSelect;

@@ -135,6 +135,18 @@ export async function processInvoiceById(
     const report = async (msg: string) => {
         try { if (onProgress) await onProgress(msg); } catch { /* progress is best-effort */ }
     };
+    // Emit a structured step into the live ProcessingTimeline (best-effort).
+    const step = async (
+        stage: string,
+        status: "running" | "done" | "skipped" | "error",
+        extra: { engine?: string; path?: "a" | "b"; reasoning?: string } = {},
+    ) => {
+        try {
+            await appendInvoiceStep(invoiceId, {
+                stage, status, at: new Date().toISOString(), ...extra,
+            });
+        } catch { /* timeline is best-effort */ }
+    };
 
     const {
         getInvoiceById,
@@ -146,6 +158,8 @@ export async function processInvoiceById(
         updateLineItemMatch,
         updateInvoiceDocumentType,
         setInvoiceEngine,          // NEW (records which engine ran)
+        appendInvoiceStep,         // NEW (live processing timeline)
+        resetInvoiceSteps,         // NEW (clears timeline at run start)
     } = await import("./invoiceDb");
     const { classifyAndExtract, matchProduct } = await import(
         "./python-integration"
@@ -159,6 +173,8 @@ export async function processInvoiceById(
     try {
         await updateInvoiceStatus(invoiceId, "processing");
         await report("Starting extraction");
+        await resetInvoiceSteps(invoiceId);
+        await step("Queue claim", "done", { reasoning: "Worker claimed invoice, status → processing" });
         await deleteLineItemsByInvoiceId(invoiceId);
 
         // ── Read engine + extraction preferences from user config ──────
@@ -181,12 +197,19 @@ export async function processInvoiceById(
 
         // Record the engine we're about to use (best-effort; shown in queue UI)
         try { await setInvoiceEngine(invoiceId, engineToUse ?? "auto"); } catch {}
+        await step("Engine routing", "running", {
+            engine: engineToUse ?? "auto",
+            reasoning: engineToUse
+                ? `User config engine: ${engineToUse}`
+                : "No explicit engine → auto (pdfplumber → Surya on scans)",
+        });
 
         // Download PDF to temp location
         if (!invoice.pdfFileKey) {
             throw new Error("Invoice PDF file key not found");
         }
         await report("Downloading PDF");
+        await step("Download PDF", "done", { reasoning: "PDF written to temp path" });
         const { storageGetBuffer } = await import("./storage");
         const buffer = await storageGetBuffer(invoice.pdfFileKey);
         const os = await import("os");
@@ -201,10 +224,82 @@ export async function processInvoiceById(
 
         // ═══ STEP 1: Classify document type ═══
         await report("Classifying & extracting (OCR/VLM)");
+
+        // Flip the timeline to the stage that's about to do the heavy work, as
+        // RUNNING, before the (potentially multi-minute) extraction call. We
+        // don't yet know digital-vs-scanned (Python decides via pdfplumber), so
+        // pick the long stage by engine family: vision engines → "Vision → JSON",
+        // everything else → "OCR / reader". The post-call block below corrects
+        // this to the true path/engine/reasoning once extraction returns.
+        {
+            const chosen = engineToUse ?? "auto";
+            const visionChosen = ["gemma_vl_local", "qwen3vl_local", "qwen_vl_local"].includes(chosen);
+            await step("Engine routing", "done", {
+                engine: chosen,
+                reasoning: `Engine selected: ${chosen} — running extraction…`,
+            });
+            if (visionChosen) {
+                await step("Vision → JSON", "running", {
+                    engine: chosen, path: "b",
+                    reasoning: "Vision model reading the image (CPU — this can take minutes)…",
+                });
+            } else {
+                await step("OCR / reader", "running", {
+                    engine: chosen === "auto" ? "pdfplumber / surya" : chosen,
+                    path: "a",
+                    reasoning: "Extracting text — digital via pdfplumber, scanned via OCR (CPU, slow)…",
+                });
+            }
+        }
+
         const { classification, extraction: extractionResult } =
             await classifyAndExtract(tempPath, engineToUse, useNativeText);
         const docType = classification.documentType;
         const handling = classification.handling;
+
+        // ── Emit the real extraction trace into the live timeline ──────────────
+        // The Python service reports which engine actually ran, the routing
+        // reasoning, and the extraction method. From the method we know whether
+        // this run took Path A (OCR/reader → semantic) or Path B (vision → JSON).
+        try {
+            const ranEngine: string =
+                (extractionResult as any)?._vlm_engine ?? engineToUse ?? "auto";
+            const method: string =
+                (extractionResult as any)?._vlm_extraction_method ??
+                (extractionResult as any)?.extraction_method ?? "";
+            const why: string =
+                (extractionResult as any)?._vlm_reasoning ??
+                (extractionResult as any)?.reasoning ?? "";
+            const isVision =
+                method === "vlm" ||
+                ["gemma_vl_local", "qwen3vl_local", "qwen_vl_local"].includes(ranEngine);
+            const path: "a" | "b" = isVision ? "b" : "a";
+
+            await step("Engine routing", "done", { engine: ranEngine, path, reasoning: why || `engine: ${ranEngine}` });
+
+            if (isVision) {
+                await step("OCR / reader", "skipped", {
+                    reasoning: "Vision model reads the image directly — no OCR step",
+                });
+                await step("Vision → JSON", "done", {
+                    engine: ranEngine, path: "b",
+                    reasoning: "Vision model returned structured invoice fields directly",
+                });
+            } else {
+                await step("OCR / reader", "done", {
+                    engine: ranEngine, path: "a",
+                    reasoning: method === "markdown"
+                        ? "Reader produced Markdown (tables + text)"
+                        : method === "native_text"
+                            ? "pdfplumber extracted the PDF text layer"
+                            : "OCR transcribed the page to text",
+                });
+                await step("Semantic extract", "done", {
+                    engine: "qwen2.5-3b", path: "a",
+                    reasoning: "Local Qwen2.5-3B mapped the text to the invoice schema",
+                });
+            }
+        } catch { /* timeline is best-effort */ }
 
         // ═══ Non-invoice / non-postable gate ═══
         // Drive the decision off the classifier's `handling` directive:
@@ -506,6 +601,9 @@ export async function processInvoiceById(
             let autoAcceptedCount = 0;
             let lineNum = 0;
             const totalLines = lineItems.length;
+            await step("Match & save", "running", {
+                reasoning: `Matching ${totalLines} line item(s) against ERP catalog…`,
+            });
             for (const item of lineItems) {
                 lineNum++;
                 await report(`Matching line items (${lineNum}/${totalLines})`);
@@ -581,6 +679,9 @@ export async function processInvoiceById(
                 fs.unlink(tempPath).catch(() => {})
             );
             await updateInvoiceStatus(invoiceId, "review_needed");
+            await step("Match & save", "done", {
+                reasoning: "Line items matched; invoice flagged for review",
+            });
             tryPushToOptimusDb(invoiceId, userId).catch(() => {}); // non-blocking
 
             // Notification: review needed
