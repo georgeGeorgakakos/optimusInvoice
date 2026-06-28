@@ -39,6 +39,7 @@ const ALL_ENGINES: Record<string, { type: "local" | "vllm" }> = {
   qwen_vl_local:  { type: "local" },
   gemma_vl_local: { type: "local" },   // NEW — Gemma 3 vision container
   qwen3vl_local:  { type: "local" },   // Qwen3-VL-8B GGUF llama-server sidecar
+  qwen35_local:   { type: "local" },   // NEW — Qwen3.5-4B GGUF llama-server sidecar (newer llama.cpp)
   mineru:         { type: "local" },   // NEW — MinerU pipeline backend (CPU) → Markdown → semantic
 };
 

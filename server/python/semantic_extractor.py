@@ -304,6 +304,11 @@ Rules:
 - ΑΦΜ = vatNumber, ΔΟΥ = doy, ΜΑΡΚ = mark (Greek fields)
 - Include ALL product/service rows in lineItems — never omit items
 - Do NOT include header, subtotal, or total rows in lineItems
+- Do NOT use a COLUMN HEADER as a line-item description. Greek table headers like
+  "Α/Α" or "ΑΙΑ" (row-number), "Κωδ." (code), "Περιγραφή" (description),
+  "Ποσότητα"/"Μ.Μ." (qty/unit), "Τιμή"/"Αξία"/"ΦΠΑ" are HEADERS, never products.
+  If the only candidate description is one of these header words, the row is the
+  header row — skip it. A real line item has an actual product/service name.
 - lineItems[].description must be ONLY the product/service name. Do NOT append the
   quantity, unit price, or amount to it. E.g. for a row "Max plan - 5x 1 €90.00
   €90.00", description="Max plan - 5x", quantity=1, unitPrice=90.00, totalPrice=90.00.
@@ -358,6 +363,26 @@ Rules:
       Invoice Total (USD): $745.65
   → subtotal=745.65, vatAmount=0.00, total=745.65
   If a value is $0.00 or 0.00 it is STILL a valid number — set the field to 0, never null. Only use null when the invoice does NOT show that line at all.
+
+  CRITICAL — GREEK COLUMNAR TOTALS ROW (no label-colon!): Many Greek τιμολόγια do
+  NOT print "ΦΠΑ:" followed by a value. Instead the totals appear as a single ROW
+  of numbers sitting UNDER column headers. The header row reads (left→right):
+      Τιμή (€)  Έκπτωση (€)  Αξία (€)   ...   ΦΠΑ %   ΦΠΑ (€)   Τελ. Αξία (€)
+  and the values row is usually labelled "Σύνολα" (totals), e.g.:
+      Σύνολα   0,00   173,89   ...   24   41,73   215,62
+  Map each value to the field DIRECTLY BELOW ITS COLUMN HEADER:
+      • "Αξία (€)" / "Καθαρή Αξία" column          → subtotal   (here 173,89)
+      • "ΦΠΑ (€)" / "Φ.Π.Α." column (the EURO one) → vatAmount  (here 41,73)
+      • "ΦΠΑ %" column                              → vatRate    (here 24 — a percent, NOT euros)
+      • "Τελ. Αξία (€)" / "ΠΛΗΡΩΤΕΟ" / "Σύνολο"     → total      (here 215,62)
+  DO NOT confuse the two ΦΠΑ columns: "ΦΠΑ %" is the rate (24), "ΦΠΑ (€)" is the
+  euro amount (41,73). The vatAmount is the EURO column, never the percent.
+  DO NOT put the grand total (215,62) into both subtotal AND total — the subtotal is
+  the smaller "Αξία" figure (173,89). If you only see one big number, the net (Αξία)
+  is total minus the ΦΠΑ (€) value: subtotal = total − vatAmount.
+  A standalone "Πληρωτέο (€): 215,62" line confirms the grand total.
+  SANITY CHECK before answering: subtotal + vatAmount must equal total
+  (173,89 + 41,73 = 215,62). If your numbers don't reconcile, re-read the Σύνολα row.
 
 - CRITICAL — CURRENCY DETECTION:
   Detect the invoice currency from these signals in the text:
@@ -981,6 +1006,62 @@ def _validate_extraction(data: Dict[str, Any], ocr_text: str) -> Dict[str, Any]:
                 f"lineItem vatRate={rate_str} never appears in OCR text → nulled"
             )
             li["vatRate"] = None
+
+    # ────────────────────────────────────────────────────────────────────
+    # 4.5 VAT AMOUNT RECOVERY (Greek columnar-totals dropped-VAT fix)
+    # ────────────────────────────────────────────────────────────────────
+    # Observed on the Surya/auto run for the watermarked Greek invoice: the OCR
+    # text cleanly contained the totals row "Σύνολα 0,00 173,89 ... 41,73 215,62"
+    # (net 173,89 / ΦΠΑ 41,73 / total 215,62), yet the small semantic model stored
+    # vatAmount=0 (and sometimes subtotal==total). The number 41,73 WAS present in
+    # the source — the model just failed to map the ΦΠΑ(€) column. Rather than lose
+    # it, recover deterministically: when vatAmount is missing/zero but subtotal and
+    # total disagree, the implied VAT is (total − subtotal); if that exact figure
+    # also appears verbatim in the OCR text, it's the real ΦΠΑ amount, so adopt it.
+    # Conservative: only fires when the recovered number is actually present in the
+    # text AND makes the totals reconcile — never invents a value.
+    try:
+        _sub = data.get("subtotal")
+        _vat = data.get("vatAmount")
+        _tot = data.get("total")
+        _sub_f = float(_sub) if _sub is not None else None
+        _vat_f = float(_vat) if _vat is not None else None
+        _tot_f = float(_tot) if _tot is not None else None
+
+        # Case A: have subtotal + total, VAT missing or zero, and they differ.
+        if (_sub_f is not None and _tot_f is not None
+                and (_vat_f is None or abs(_vat_f) < 0.005)
+                and abs(_tot_f - _sub_f) > 0.05):
+            implied = round(_tot_f - _sub_f, 2)
+            # Does this implied VAT appear in the OCR text? Accept both EU "41,73"
+            # and US "41.73" renderings of the same number.
+            cand_eu = f"{implied:.2f}".replace(".", ",")
+            cand_us = f"{implied:.2f}"
+            if implied > 0 and (cand_eu in ocr_text or cand_us in ocr_text):
+                data["vatAmount"] = implied
+                issues.append(
+                    f"vatAmount recovered as {implied} from (total {_tot_f} − "
+                    f"subtotal {_sub_f}); value present in OCR text "
+                    f"(model had dropped the ΦΠΑ column to 0/null)"
+                )
+
+        # Case B: subtotal missing/zero but total + a VAT amount are present — the
+        # net is total − vat (the "Αξία" column). Recover subtotal if that figure
+        # is in the text. Handles the inverse mis-map (model put gross into both).
+        elif (_tot_f is not None and _vat_f is not None and abs(_vat_f) > 0.005
+              and (_sub_f is None or abs(_sub_f) < 0.005
+                   or abs(_sub_f - _tot_f) < 0.005)):
+            implied_net = round(_tot_f - _vat_f, 2)
+            cand_eu = f"{implied_net:.2f}".replace(".", ",")
+            cand_us = f"{implied_net:.2f}"
+            if implied_net > 0 and (cand_eu in ocr_text or cand_us in ocr_text):
+                data["subtotal"] = implied_net
+                issues.append(
+                    f"subtotal recovered as {implied_net} from (total {_tot_f} − "
+                    f"vat {_vat_f}); value present in OCR text"
+                )
+    except (ValueError, TypeError):
+        pass
 
     # ────────────────────────────────────────────────────────────────────
     # 5. TOTAL RECONCILIATION

@@ -490,4 +490,103 @@ def _safe_parse_json(raw: str) -> Dict[str, Any]:
         except json.JSONDecodeError as e:
             log.warning(f"[GemmaVL] JSON parse failed even after locating braces: {e}")
 
+    # ── Last resort: REPAIR a truncated / unterminated JSON object ────────────
+    # A small CPU VLM that hits its max_new_tokens cap mid-output leaves valid
+    # JSON that simply lacks its closing braces (observed on the Gemma 512-token
+    # run: output ended at  "total": 267.22,  with no closing } for totals or the
+    # root object). The two json.loads() attempts above both reject it, and we
+    # used to return {} — silently DISCARDING a perfectly good partial extraction
+    # (subtotal/line-items/issuer were all present, just unterminated). Instead we
+    # now attempt a structural repair: take the text from the first "{", drop any
+    # trailing comma/partial token, and append the closing brackets the open
+    # structure still needs. This recovers the financials from a cut-off response
+    # rather than throwing them away. Raising GEMMA_MAX_NEW_TOKENS is the real fix
+    # for the truncation; this is the resilience net for when it still happens.
+    repaired = _repair_truncated_json(cleaned)
+    if repaired is not None:
+        try:
+            result = json.loads(repaired)
+            if isinstance(result, dict):
+                log.info("[GemmaVL] Recovered truncated JSON via bracket repair")
+                return result
+        except json.JSONDecodeError as e:
+            log.warning(f"[GemmaVL] JSON repair attempt still unparseable: {e}")
+
     return {}
+
+
+def _repair_truncated_json(text: str) -> Optional[str]:
+    """
+    Best-effort repair of a JSON object that was cut off before it finished
+    (model ran out of output tokens). Returns a parseable JSON string, or None
+    if no repair is possible.
+
+    Strategy (string-aware, single forward pass from the first '{'):
+      1. Walk the characters tracking string state (respecting \\ escapes) and
+         the stack of open '{' / '[' brackets.
+      2. If we end up INSIDE a string (odd number of unescaped quotes), close it.
+      3. Strip a dangling trailing comma or a half-written key/value tail
+         (e.g.  "total": 267.22,  →  drop the trailing comma;
+                "city": "ΛΑΡ      →  the open string is closed in step 2).
+      4. Append the closing brackets for every still-open '[' / '{', in reverse
+         order, so the structure becomes valid.
+    This is deliberately conservative — it only ever ADDS terminators and trims a
+    trailing fragment; it never reorders or invents field values.
+    """
+    if not text:
+        return None
+    start = text.find("{")
+    if start == -1:
+        return None
+    s = text[start:]
+
+    stack: list = []          # holds '{' and '[' in nesting order
+    in_string = False
+    escape = False
+    last_safe = 0             # index (exclusive) of the last structurally-complete point
+
+    for i, ch in enumerate(s):
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            if not in_string:
+                last_safe = i + 1      # a string just closed — safe truncation point
+            continue
+        if in_string:
+            continue
+        if ch in "{[":
+            stack.append(ch)
+        elif ch in "}]":
+            if stack:
+                stack.pop()
+            last_safe = i + 1          # a value/container just closed — safe point
+        elif ch in "0123456789eE+-.":
+            last_safe = i + 1          # numbers are self-terminating — safe point
+        elif ch in "nultruefals":
+            # tail of a bare literal (null / true / false) — treat as safe-ish;
+            # the trailing-comma/colon trim below cleans up a half-written one.
+            last_safe = i + 1
+
+    # If the cut happened inside a string, close that string first.
+    if in_string:
+        s = s + '"'
+
+    # Trim back to the last structurally-safe point if we're mid-token, then
+    # drop a dangling trailing comma / colon / whitespace so the appended
+    # closers attach to a complete value.
+    if not in_string and last_safe < len(s):
+        s = s[:last_safe]
+    s = re.sub(r"[\s,:]+$", "", s)
+
+    # Append the closers for everything still open, innermost first.
+    if not stack and not in_string:
+        # Nothing was open and we didn't fix a string — the earlier parses would
+        # have already succeeded, so there's nothing useful to repair.
+        return None
+    closers = "".join("}" if b == "{" else "]" for b in reversed(stack))
+    return s + closers

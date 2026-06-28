@@ -264,6 +264,7 @@ function VlmStatusPanel() {
     qwen_vl_local: "Qwen2.5-VL-3B",
     gemma_vl_local: "Gemma 3 4B",       // NEW — parallel container :8500
     qwen3vl_local: "Qwen3-VL-8B",       // NEW — Q5_K_M GGUF llama-server sidecar :8600
+    qwen35_local: "Qwen3.5-4B",         // NEW — Q4_K_M GGUF llama-server sidecar :8800 (newer llama.cpp)
     mineru: "MinerU (pipeline)",         // NEW — CPU document parser → Markdown → semantic
   };
 
@@ -960,30 +961,34 @@ export default function Configuration() {
                   Default Engine
                 </Label>
                 <select
-                    value={(settings as any).vlmEngine ?? "surya"}
+                    value={(settings as any).vlmEngine ?? "auto"}
                     onChange={e => update("vlmEngine", e.target.value)}
                     className="w-full max-w-xs h-8 text-xs rounded-lg border border-slate-200 bg-slate-50 px-3 focus:bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
                 >
                   <option value="auto">
-                    Auto — pdfplumber for digital PDFs, Surya OCR for scans (recommended)
+                    Auto — Surya OCR + Qwen2.5-3B semantic extraction
                   </option>
                   <option value="surya">
-                    Surya — OCR for scanned/image PDFs (Greek+English, slow on CPU)
+                    Surya — Fast layout-aware OCR (10–30s)
                   </option>
                   <option value="qwen_vl_local">
-                    Qwen2.5-VL-3B — vision model via transformers fp32 (slowest, CPU)
+                    Qwen2.5-VL-3B — Alibaba vision model, image→JSON (90–120s, CPU)
                   </option>
                   {/* NEW — Gemma 3 4B-it parallel container on port 8500 */}
                   <option value="gemma_vl_local">
-                    Gemma 3 4B-it — vision model, best for hard/watermarked Greek scans (CPU)
+                    Gemma 3 4B-it — Google vision model, image→JSON (60–90s, CPU)
                   </option>
                   {/* NEW — Qwen3-VL-8B Q5_K_M GGUF via llama-server sidecar on port 8600 */}
                   <option value="qwen3vl_local">
-                    Qwen3-VL-8B — vision model GGUF, highest accuracy, slower than Gemma (CPU)
+                    Qwen3-VL-8B — newest vision model, GGUF (faster than fp32, CPU)
+                  </option>
+                  {/* NEW — Qwen3.5-4B Q4_K_M GGUF via llama-server sidecar on port 8800 (newer llama.cpp) */}
+                  <option value="qwen35_local">
+                    Qwen3.5-4B — newest multimodal model, GGUF (~half the 8B latency, CPU)
                   </option>
                   {/* NEW — MinerU pipeline backend (pure CPU) → Markdown → semantic_extractor */}
                   <option value="mineru">
-                    MinerU — document parser → Markdown (tables; struggles with watermarks)
+                    MinerU — CPU document parser → Markdown → semantic (reader, not vision-to-JSON)
                   </option>
                   <option value="got_ocr2" disabled style={{color:"#94a3b8"}}>
                     GOT-OCR2 — not available (conflicts with transformers 4.52)
