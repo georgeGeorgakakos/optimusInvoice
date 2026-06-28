@@ -10,7 +10,7 @@
 #    - All `build:` blocks removed → uses loaded `image:` only.
 #    - qwen-vl (Qwen2.5-VL-3B) removed → you were not running it locally.
 #    - MySQL port 3306 NOT published to host (DB stays internal).
-#    - Model service ports (8300/8500/8600/8700) NOT published to host.
+#    - Model service ports (8300/8500/8600/8700/8800) NOT published to host.
 #    - ONLY app:3000 is exposed publicly.
 #
 #  Required on the VM, beside this file:
@@ -21,7 +21,9 @@
 #
 #  Images expected (load these first):
 #    optimus-app  vlm-service  gemma-vl-service  mineru-service
-#  Public images pulled automatically: mysql:8.0, ghcr.io/ggml-org/llama.cpp:server-b6907
+#  Public images pulled automatically: mysql:8.0,
+#    ghcr.io/ggml-org/llama.cpp:server-b6907   (qwen3vl, Qwen3-VL-8B)
+#    ghcr.io/ggml-org/llama.cpp:server-b9775   (qwen35,  Qwen3.5-4B — NEWER build)
 # =============================================================================
 
 services:
@@ -67,6 +69,7 @@ services:
     environment:
       GEMMA_VL_SERVICE_URL: "http://gemma-vl:8500"
       QWEN3VL_SERVICE_URL: "http://qwen3vl:8600"
+      QWEN35_SERVICE_URL: "http://qwen35:8800"
       MINERU_SERVICE_URL: "http://mineru-service:8700"
       QWEN3VL_DPI: "90"
       HF_HOME: "/models"
@@ -168,6 +171,55 @@ services:
       - optimus
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8600/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 8
+      start_period: 240s
+
+  # ── Qwen3.5-4B GGUF vision sidecar (llama.cpp server) — NEW ─────────────────
+  # Sibling of qwen3vl on the NEWER Qwen3.5 model. CRITICAL: needs a NEWER
+  # llama.cpp build than qwen3vl's b6907 (b6907 predates Qwen3.5 and CANNOT load
+  # its GGUF+mmproj). Pinned to b9775 (≈May 2026) via QWEN35_LLAMA_IMAGE. The
+  # qwen3vl service keeps b6907, untouched. ~half the 8B's CPU latency. Internal
+  # only (expose, not ports) — like every other model sidecar on the VM.
+  # Reasoning left OFF (Qwen3.5 small-series default) for deterministic JSON.
+  #
+  # NOTE: this is a PUBLIC image pulled on the VM (not a docker-save/load image),
+  # so no `docker load` is needed for it — just `docker compose pull qwen35` or
+  # let `up` pull it. Place the GGUF + mmproj under ./model_cache/qwen35/ first.
+  qwen35:
+    image: ${QWEN35_LLAMA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-b9775}
+    container_name: optimus_qwen35
+    restart: unless-stopped
+    mem_limit: 18g
+    volumes:
+      - type: bind
+        source: ./model_cache
+        target: /models
+    environment:
+      LLAMA_CACHE: "/models/llama"
+    command: >
+      -m /models/qwen35/Qwen3.5-4B-Q4_K_M.gguf
+      --mmproj /models/qwen35/mmproj-F16.gguf
+      --host 0.0.0.0
+      --port 8800
+      --ctx-size 4096
+      --threads 12
+      --parallel 1
+      --no-mmproj-offload
+      --no-mmap
+      --temp 0.1
+      --top-k 20
+      --top-p 0.8
+      -n 2048
+      --jinja
+      --chat-template-kwargs '{"enable_thinking":false}'
+    expose:
+      - "8800"
+    networks:
+      - optimus
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8800/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 8

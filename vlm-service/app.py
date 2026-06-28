@@ -57,6 +57,7 @@ QWEN_VL_SERVICE_URL   = os.getenv("QWEN_VL_SERVICE_URL",  "http://qwen-vl-servic
 GEMMA_VL_LOCAL_MODEL  = os.getenv("GEMMA_VL_LOCAL_MODEL", "google/gemma-3-4b-it")
 GEMMA_VL_SERVICE_URL  = os.getenv("GEMMA_VL_SERVICE_URL", "http://gemma-vl-service:8500")  # separate container
 QWEN3VL_SERVICE_URL   = os.getenv("QWEN3VL_SERVICE_URL",  "http://qwen3vl:8600")            # llama-server sidecar
+QWEN35_SERVICE_URL    = os.getenv("QWEN35_SERVICE_URL",   "http://qwen35:8800")             # Qwen3.5-4B llama-server sidecar (newer llama.cpp)
 MINERU_SERVICE_URL    = os.getenv("MINERU_SERVICE_URL",   "http://mineru-service:8700")     # MinerU reader sidecar
 
 # ── HTML tag stripper (Surya sometimes emits <b>text</b>) ────────────────────
@@ -270,6 +271,7 @@ class Engine(str, Enum):
     qwen_vl_local  = "qwen_vl_local"    # local CPU — no vLLM required
     gemma_vl_local = "gemma_vl_local"   # local CPU — Gemma 3 4B-it
     qwen3vl_local  = "qwen3vl_local"    # local CPU — Qwen3-VL-8B Q5_K_M GGUF via llama-server sidecar
+    qwen35_local   = "qwen35_local"     # local CPU — Qwen3.5-4B Q4_K_M GGUF via llama-server sidecar (newer llama.cpp)
     mineru         = "mineru"           # local CPU — MinerU pipeline backend → Markdown → semantic_extractor
     auto           = "auto"
 
@@ -657,7 +659,7 @@ async def health():
     return {
         "status":        "ok",
         "device":        DEVICE,
-        "loaded_models": list(_models.keys()) + ["qwen_vl_local", "gemma_vl_local", "qwen3vl_local", "mineru"],
+        "loaded_models": list(_models.keys()) + ["qwen_vl_local", "gemma_vl_local", "qwen3vl_local", "qwen35_local", "mineru"],
         "vllm_url":      VLLM_BASE_URL,
         "semantic_llm":  semantic_status,
         "semantic_model": SEMANTIC_MODEL if SEMANTIC_ENABLED else None,
@@ -973,6 +975,49 @@ async def _do_extract_pdf(file, engine, doc_type, extract_invoice, use_native_te
         except Exception as exc:
             log.error(f"[Qwen3VL] Failed: {exc}", exc_info=True)
             error_msg = f"qwen3vl sidecar unavailable: {exc}"
+            ocr_text  = ""
+
+    # --- Qwen3.5-4B path (NEW — GGUF via llama-server sidecar, port 8800) ---
+    # Sibling of qwen3vl_local but on the NEWER Qwen3.5 model + a NEWER llama.cpp
+    # image (b6907 predates Qwen3.5 and can't load it). ~half the active params of
+    # the 8B → ~half the CPU latency, with better Greek/document accuracy. Same
+    # Path-B contract: talks to the sidecar over HTTP, reuses vision_postprocess.
+    elif used_engine == "qwen35_local":
+        try:
+            import qwen35_engine
+            # native pdfplumber text (if any) → reference for postprocess validation
+            _ref_text = None
+            try:
+                _ref_text = _extract_native_text(pdf_bytes)
+            except Exception:
+                _ref_text = None
+            _q35_result = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: qwen35_engine.extract_invoice_from_pdf_bytes(
+                    pdf_bytes, reference_text=_ref_text or None
+                ),
+            )
+            ocr_text   = _ref_text or _q35_result.get("text", "")
+            structured = _q35_result.get("structured", {})
+            if isinstance(structured, dict) and structured:
+                structured = validate_vision_extraction(structured)
+            elapsed = round(time.perf_counter() - t0, 2)
+            log.info(f"extract-pdf: engine=qwen35_local, chars={len(ocr_text)}, elapsed={elapsed}s")
+            return {
+                "ocr_text":     ocr_text,
+                "text":         ocr_text,
+                "structured":   structured,
+                "engines_used": ["qwen35_local"],
+                # Path-B vision engine: tag as "vlm" so the UI badge + debug panel
+                # label this a vision extraction instead of falling back to "unknown".
+                "extraction_method": "vlm",
+                "reasoning":    "engine=qwen35_local → Path B (vision model returns structured JSON directly; semantic step skipped)",
+                "elapsed":      elapsed,
+                "engine":       "qwen35_local",
+            }
+        except Exception as exc:
+            log.error(f"[Qwen35] Failed: {exc}", exc_info=True)
+            error_msg = f"qwen35 sidecar unavailable: {exc}"
             ocr_text  = ""
 
     # --- Gemma 3 4B-it local path (NEW — direct image→JSON via Gemma container) ---

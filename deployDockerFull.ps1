@@ -139,6 +139,21 @@ if ((Test-Path $q3Model) -and (Test-Path $q3Mmproj)) {
     Write-Warn "(Skip the qwen3vl service for now with: docker compose up -d --scale qwen3vl=0)"
 }
 
+# ── Qwen3.5-4B GGUF model cache (qwen35 container — port 8800) ────────────────
+# Mirrors the qwen3vl check above. The qwen35 sidecar needs the Q4_K_M GGUF and
+# its F16 mmproj under model_cache\qwen35\. NOTE: qwen35 uses a NEWER llama.cpp
+# image (server-b9828) than qwen3vl's b6907 — b6907 predates Qwen3.5 and cannot
+# load it. Download-Qwen35.ps1 fetches both files AND pulls the right image.
+$q35Model  = "$BASE\model_cache\qwen35\Qwen3.5-4B-Q4_K_M.gguf"
+$q35Mmproj = "$BASE\model_cache\qwen35\mmproj-F16.gguf"
+if ((Test-Path $q35Model) -and (Test-Path $q35Mmproj)) {
+    Write-Ok "Qwen3.5-4B GGUF + mmproj found in model_cache\qwen35\ (~3.4 GB)"
+} else {
+    Write-Warn "Qwen3.5-4B GGUF/mmproj NOT found in model_cache\qwen35\ — the qwen35 container will not start."
+    Write-Warn "Download once:  .\Download-Qwen35.ps1  (fetches the GGUF + mmproj and the newer llama.cpp image)"
+    Write-Warn "(Skip the qwen35 service for now with: docker compose up -d --scale qwen35=0)"
+}
+
 $suryaDetCached = Test-Path "$BASE\model_cache\hub\models--vikp--surya_det3"
 $suryaRecCached = Test-Path "$BASE\model_cache\hub\models--vikp--surya_rec2"
 if ($suryaDetCached -and $suryaRecCached) {
@@ -279,6 +294,7 @@ Copy-Verified "$pySrc\mydata_fields.py"      "$BASE\vlm-service\mydata_fields.py
 Copy-Verified "$pySrc\client_profile.py"     "$BASE\vlm-service\client_profile.py"       "client_profile.py"
 Copy-Verified "$pySrc\dispatch_fields.py"    "$BASE\vlm-service\dispatch_fields.py"      "dispatch_fields.py"
 Copy-Verified "$pySrc\qwen3vl_engine.py"     "$BASE\vlm-service\qwen3vl_engine.py"       "qwen3vl_engine.py"
+Copy-Verified "$pySrc\qwen35_engine.py"      "$BASE\vlm-service\qwen35_engine.py"        "qwen35_engine.py"
 # NOTE: MinerU is NOT staged into vlm-service — it lives in its own mineru-service
 # sidecar (staged in STEP 4d below). vlm-service reaches it over HTTP.
 
@@ -360,6 +376,8 @@ if ($appContent.Length -lt 1000)               { Write-Fail "SMOKE: app.py too s
 if ($appContent -notmatch "extract.pdf")        { Write-Fail "SMOKE: app.py missing /extract-pdf"; exit 1 }
 if ($appContent -notmatch "semantic_extractor") { Write-Fail "SMOKE: app.py missing semantic_extractor"; exit 1 }
 if ($appContent -notmatch "gemma_vl_local")     { Write-Fail "SMOKE: app.py missing gemma_vl_local dispatcher"; exit 1 }
+if ($appContent -notmatch "qwen35_local")       { Write-Warn "SMOKE: app.py missing qwen35_local dispatcher — the Qwen3.5 engine will not be reachable (non-fatal)" }
+else                                            { Write-Ok "qwen35_local dispatcher present in app.py" }
 if ($parContent.Length -lt 1000)               { Write-Fail "SMOKE: vlm_invoice_parser too small"; exit 1 }
 if ($semContent -notmatch '_validate_extraction') {
     Write-Warn "semantic_extractor.py missing _validate_extraction() — extraction quality degraded (non-fatal)"
@@ -404,9 +422,9 @@ Write-Warn "If Qwen3-VL/Gemma not cached: runtime download adds time."
 Write-Warn "Subsequent runs reuse cached layers and start in 1-2 min."
 
 if ($DeployQwenVl) {
-    $composeServices = @("mysql", "vlm", "qwen-vl", "gemma-vl", "qwen3vl", "mineru-service", "app")
+    $composeServices = @("mysql", "vlm", "qwen-vl", "gemma-vl", "qwen3vl", "qwen35", "mineru-service", "app")
 } else {
-    $composeServices = @("mysql", "vlm", "gemma-vl", "qwen3vl", "mineru-service", "app")
+    $composeServices = @("mysql", "vlm", "gemma-vl", "qwen3vl", "qwen35", "mineru-service", "app")
     docker compose stop qwen-vl 2>$null | Out-Null
     docker compose rm -f qwen-vl 2>$null | Out-Null
 }
@@ -466,6 +484,7 @@ if ($appReady) { Write-Ok "App is up!" } else { Write-Warn "App did not respond 
 Write-Step "Checking optional vision services (informational only)..."
 $gemmaHealth = docker inspect -f "{{.State.Health.Status}}" optimus_gemma_vl 2>$null
 $qwen3Health = docker inspect -f "{{.State.Health.Status}}" optimus_qwen3vl  2>$null
+$qwen35Health = docker inspect -f "{{.State.Health.Status}}" optimus_qwen35  2>$null
 $mineruHealth = docker inspect -f "{{.State.Health.Status}}" optimus_mineru  2>$null
 if ($DeployQwenVl) {
     $qwenHealth = docker inspect -f "{{.State.Health.Status}}" optimus_qwen_vl 2>$null
@@ -474,9 +493,11 @@ if ($DeployQwenVl) {
 }
 Write-Host "    gemma-vl : $gemmaHealth" -ForegroundColor DarkGray
 Write-Host "    qwen3vl  : $qwen3Health" -ForegroundColor DarkGray
+Write-Host "    qwen35   : $qwen35Health" -ForegroundColor DarkGray
 Write-Host "    mineru   : $mineruHealth" -ForegroundColor DarkGray
 if ($gemmaHealth -ne "healthy") { Write-Warn "Gemma 3 still loading    — docker logs -f optimus_gemma_vl" }
 if ($qwen3Health -ne "healthy") { Write-Warn "Qwen3-VL-8B still loading — docker logs -f optimus_qwen3vl" }
+if ($qwen35Health -ne "healthy") { Write-Warn "Qwen3.5-4B still loading  — docker logs -f optimus_qwen35" }
 if ($mineruHealth -ne "healthy") { Write-Warn "MinerU still loading     — docker logs -f optimus_mineru" }
 
 # =============================================================================
@@ -535,6 +556,7 @@ Write-Host "  App      : http://localhost:3000" -ForegroundColor Cyan
 Write-Host "  VLM      : http://localhost:8300/health  (Surya + pdfplumber + semantic Qwen)" -ForegroundColor Cyan
 Write-Host "  GemmaVL  : http://localhost:8500/health  (Gemma 3 4B-it GGUF)" -ForegroundColor Cyan
 Write-Host "  Qwen3VL  : http://localhost:8600/health  (Qwen3-VL-8B GGUF)" -ForegroundColor Cyan
+Write-Host "  Qwen35   : http://localhost:8800/health  (Qwen3.5-4B GGUF)" -ForegroundColor Cyan
 Write-Host "  MinerU   : http://localhost:8700/health  (MinerU reader sidecar)" -ForegroundColor Cyan
 Write-Host "  MySQL    : localhost:3306  (db: invoice_automation)" -ForegroundColor Cyan
 Write-Host ""

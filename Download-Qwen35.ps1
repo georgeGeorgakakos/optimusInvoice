@@ -23,7 +23,7 @@ $OutDir = Join-Path $BASE "model_cache\qwen35"
 $Repo   = "unsloth/Qwen3.5-4B-GGUF"
 $LlmFile    = "Qwen3.5-4B-Q4_K_M.gguf"
 $MmprojFile = "mmproj-F16.gguf"
-$LlamaImage = "ghcr.io/ggml-org/llama.cpp:server-b9775"   # NEWER than qwen3vl b6907 (required for Qwen3.5)
+$LlamaImage = "ghcr.io/ggml-org/llama.cpp:server-b9828"   # NEWER than qwen3vl b6907 (required for Qwen3.5)
 
 function Write-Ok   ($m) { Write-Host "[OK]   $m" -ForegroundColor Green }
 function Write-Step ($m) { Write-Host "`n=== $m ===" -ForegroundColor Cyan }
@@ -65,10 +65,33 @@ Download-HFFile $Repo $LlmFile    $OutDir
 Download-HFFile $Repo $MmprojFile $OutDir
 
 # -- 4. Pull the PINNED llama.cpp server image --------------------------------
-Write-Step "Pulling pinned llama.cpp server image: $LlamaImage"
-docker pull $LlamaImage
-if ($LASTEXITCODE -ne 0) { throw "docker pull failed for $LlamaImage" }
-Write-Ok "llama.cpp server image ready"
+# llama.cpp publishes a new server-bXXXX tag almost daily and PRUNES old ones,
+# so a hardcoded tag can 404 ("manifest unknown") weeks later. We try the
+# pinned tag first, then fall back to a list of known-good recent tags, then to
+# the rolling :server tag (always exists, = latest CPU build). Any of these is
+# new enough for Qwen3.5 (day-1 support landed ~Mar 2026). To force a specific
+# tag, set $LlamaImage above or the QWEN35_LLAMA_IMAGE env in compose.
+$LlamaCandidates = @(
+    $LlamaImage,                                  # the pinned tag (b9828)
+    "ghcr.io/ggml-org/llama.cpp:server-b9828",    # explicit recent fallback
+    "ghcr.io/ggml-org/llama.cpp:server"           # rolling latest CPU build
+) | Select-Object -Unique
+
+$PulledImage = $null
+foreach ($img in $LlamaCandidates) {
+    Write-Step "Pulling llama.cpp server image: $img"
+    docker pull $img
+    if ($LASTEXITCODE -eq 0) { $PulledImage = $img; break }
+    Write-Warn "Pull failed for $img - trying next candidate..."
+}
+if (-not $PulledImage) {
+    throw "Could not pull any llama.cpp server image. Check https://github.com/ggml-org/llama.cpp/pkgs/container/llama.cpp/versions for a current 'server-bXXXX' tag and set QWEN35_LLAMA_IMAGE."
+}
+Write-Ok "llama.cpp server image ready: $PulledImage"
+if ($PulledImage -ne $LlamaImage) {
+    Write-Warn "Pinned tag $LlamaImage was unavailable; used $PulledImage instead."
+    Write-Warn "Set QWEN35_LLAMA_IMAGE=$PulledImage in your .env so compose uses the same image."
+}
 
 # -- 5. Summary ---------------------------------------------------------------
 Write-Step "Done - Qwen3.5-4B sidecar is ready"

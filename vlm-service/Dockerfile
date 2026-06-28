@@ -261,6 +261,9 @@ COPY vision_validator.py .
 COPY qwen3vl_engine.py   .
 #                       ^ REQUIRED: vlm_service.py imports qwen3vl_engine for the
 #                         Qwen3-VL-8B sidecar dispatch + 503/truncation handling.
+COPY qwen35_engine.py    .
+#                       ^ REQUIRED: vlm_service.py imports qwen35_engine for the
+#                         Qwen3.5-4B sidecar dispatch (port 8800, newer llama.cpp).
 # NOTE: mineru is NOT installed here. MinerU lives in its own mineru-service
 #       sidecar container (modern torch/transformers, incompatible with Surya
 #       0.6.13's pins). vlm_service.py reaches it over HTTP (MINERU_SERVICE_URL),

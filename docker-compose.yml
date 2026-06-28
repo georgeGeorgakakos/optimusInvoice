@@ -60,6 +60,7 @@ services:
       QWEN_VL_SERVICE_URL: "http://qwen-vl:8400"
       GEMMA_VL_SERVICE_URL: "http://gemma-vl:8500"
       QWEN3VL_SERVICE_URL: "http://qwen3vl:8600"
+      QWEN35_SERVICE_URL: "http://qwen35:8800"
       MINERU_SERVICE_URL: "http://mineru-service:8700"
       QWEN3VL_DPI: "90"
       HF_HOME: "/models"
@@ -200,6 +201,50 @@ services:
       - optimus
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8600/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 8
+      start_period: 240s
+
+  # ── Qwen3.5-4B GGUF vision sidecar (llama.cpp server, OpenAI-compatible) ─────
+  # Sibling of qwen3vl on the NEWER Qwen3.5 model. CRITICAL: Qwen3.5 needs a NEWER
+  # llama.cpp build than qwen3vl's b6907 (which predates Qwen3.5 and cannot load
+  # its GGUF+mmproj). Pin QWEN35_LLAMA_IMAGE to an Apr-2026+ server tag (b8700+).
+  # The qwen3vl service above keeps b6907, untouched. ~half the 8B's CPU latency.
+  # Reasoning left OFF (Qwen3.5 small-series default) for deterministic JSON.
+  qwen35:
+    image: ${QWEN35_LLAMA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-b9828}
+    container_name: optimus_qwen35
+    restart: unless-stopped
+    mem_limit: 18g
+    volumes:
+      - type: bind
+        source: ./model_cache
+        target: /models
+    environment:
+      LLAMA_CACHE: "/models/llama"
+    command: >
+      -m /models/qwen35/Qwen3.5-4B-Q4_K_M.gguf
+      --mmproj /models/qwen35/mmproj-F16.gguf
+      --host 0.0.0.0
+      --port 8800
+      --ctx-size 4096
+      --threads 10
+      --parallel 1
+      --no-mmproj-offload
+      --no-mmap
+      --temp 0.1
+      --top-k 20
+      --top-p 0.8
+      -n 2048
+      --jinja
+      --chat-template-kwargs '{"enable_thinking":false}'
+    ports:
+      - "8800:8800"
+    networks:
+      - optimus
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8800/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 8
