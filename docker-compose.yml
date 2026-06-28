@@ -237,7 +237,7 @@ services:
       --temp 0.1
       --top-k 20
       --top-p 0.8
-      --n 2048
+      -n 2048
       --reasoning off
     ports:
       - "8800:8800"
