@@ -1,0 +1,346 @@
+# =============================================================================
+#  OptimusInvoice — OCI GPU VM Deployment Compose (CUDA)
+#
+#  GPU VARIANT of docker-compose.prod.yml. Differences:
+#    - qwen35 / qwen3vl use llama.cpp CUDA images (server-cuda-*) + --n-gpu-layers
+#    - --no-mmap removed on the sidecars (RAM-residence trick is CPU-only)
+#    - each GPU sidecar reserves an NVIDIA device via deploy.resources
+#    - vlm stays CPU by default; a commented block shows how to GPU-enable it
+#
+#  HOST PREREQUISITES (not code — must be done on the VM first):
+#    1. An OCI GPU shape (e.g. VM.GPU.A10.1) with an NVIDIA GPU
+#    2. NVIDIA driver installed on the host (nvidia-smi must work)
+#    3. nvidia-container-toolkit installed + Docker configured:
+#         sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker
+#    4. Verify:  docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi
+#
+#  VRAM: Qwen3.5-4B Q4 ≈ 4-6 GB; Qwen3-VL-8B Q4 ≈ 8-10 GB. Both ≈ 16 GB. On a
+#  single smaller GPU, run ONE vision engine at a time.
+#
+#  This file is for the OCI Ubuntu VM. It does NOT build any images — it uses
+#  the images you exported locally with `docker save` and imported here with
+#  `docker load`. The source folders (./vlm-service, ./gemma-vl-service, etc.)
+#  are NOT needed on the VM.
+#
+#  Differences from the local build compose:
+#    - All `build:` blocks removed → uses loaded `image:` only.
+#    - qwen-vl (Qwen2.5-VL-3B) removed → you were not running it locally.
+#    - MySQL port 3306 NOT published to host (DB stays internal).
+#    - Model service ports (8300/8500/8600/8700/8800) NOT published to host.
+#    - ONLY app:3000 is exposed publicly.
+#
+#  Required on the VM, beside this file:
+#    .env                         (JWT_SECRET, HF_TOKEN, etc.)
+#    ./model_cache/               (all model weights — bind-mounted)
+#    ./data/client_profiles/      (metro.json — bind-mounted)
+#  External network 'optimus_ai_net' must already exist (it does).
+#
+#  Images expected (load these first):
+#    optimus-app  vlm-service  gemma-vl-service  mineru-service
+#  Public images pulled automatically: mysql:8.0,
+#    ghcr.io/ggml-org/llama.cpp:server-cuda      (both sidecars — rolling latest
+#      CUDA-12 server build; always published. Pin a server-cuda-bXXXX tag via
+#      QWEN35_LLAMA_IMAGE / QWEN3VL_LLAMA_IMAGE only if you need reproducibility.)
+# =============================================================================
+
+services:
+
+  # ── MySQL database (internal only — no host port) ───────────────────────────
+  mysql:
+    image: mysql:8.0
+    container_name: optimus-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: "${MYSQL_ROOT_PASSWORD:-optimus123}"
+      MYSQL_DATABASE: invoice_automation
+    # No `ports:` — the app reaches MySQL via the internal network as `mysql:3306`.
+    # Publishing 3306 on a public VM would expose the database to the internet.
+    volumes:
+      - mysql-data:/var/lib/mysql
+    networks:
+      - optimus
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-optimus123}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ── VLM service (Surya OCR + Qwen2.5-3B semantic + dispatcher) ──────────────
+  vlm:
+    image: vlm-service
+    container_name: vlm-service
+    restart: unless-stopped
+    # No host port — internal only (reached as vlm:8100 by the app).
+    expose:
+      - "8100"
+    volumes:
+      - type: bind
+        source: ./model_cache
+        target: /models
+      - type: bind
+        source: ./data/client_profiles
+        target: /app/data/client_profiles
+      - vlm-cache:/root/.cache
+      - llama-models:/root/.cache/llama
+    environment:
+      GEMMA_VL_SERVICE_URL: "http://gemma-vl:8500"
+      QWEN3VL_SERVICE_URL: "http://qwen3vl:8600"
+      QWEN35_SERVICE_URL: "http://qwen35:8800"
+      MINERU_SERVICE_URL: "http://mineru-service:8700"
+      QWEN3VL_DPI: "90"
+      # ── Qwen3.5 speed tuning (read by qwen35_engine.py inside this container) ──
+      # QWEN35_DPI: lower = fewer image tokens = much faster prompt processing.
+      #   Code default 110 (≈2529 image tokens on the test invoice — slow). 85 cuts
+      #   image area to ~60%. Qwen-VL needs ≥1024 image tokens; 85 stays above. Try 72 if OK.
+      # QWEN35_MAX_TOKENS: caps generation; 768 is plenty for single-page invoices.
+      QWEN35_DPI: "85"
+      QWEN35_MAX_TOKENS: "768"
+      HF_HOME: "/models"
+      TORCH_HOME: "/models"
+      # ── PHASE 2 (optional): move Surya OCR + semantic model onto the GPU ──
+      # The vlm IMAGE must first be rebuilt for CUDA:
+      #   - base it on nvidia/cuda:12.x (Dockerfile.vlm already does)
+      #   - install a CUDA torch wheel instead of torch==2.5.1+cpu
+      #   - build llama-cpp-python with CMAKE_ARGS="-DGGML_CUDA=ON"
+      # Then flip these env vars to push work onto the GPU:
+      #   TORCH_DEVICE: "cuda"          # Surya OCR on GPU (default is cpu below)
+      #   SEMANTIC_N_GPU_LAYERS: "99"   # Qwen2.5-3B semantic on GPU
+      # Leaving vlm on CPU is fine — the vision sidecars are the bottleneck,
+      # and GPU VRAM is better spent on qwen35/qwen3vl first.
+      LLAMA_CACHE_DIR: "/models/llama"
+      MAX_PAGES: "10"
+      SURYA_LANGS: "el,en"
+      SEMANTIC_ENABLED: "1"
+      SEMANTIC_MODEL: "qwen2.5:3b"
+      SEMANTIC_TIMEOUT: "120"
+      LLAMA_N_THREADS: "12"
+      LLAMA_N_THREADS_BATCH: "12"
+      LLAMA_N_CTX: "4096"
+      LLAMA_N_BATCH: "512"
+      SEMANTIC_MAX_TOKENS: "1024"
+      AUTO_SCANNED_ENGINE: "${AUTO_SCANNED_ENGINE:-surya}"
+      OPTIMUS_CLIENT_PROFILE: "/app/data/client_profiles/metro.json"
+    mem_limit: 20g
+    networks:
+      - optimus
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8100/health').status==200 else 1)" ]
+      interval: 15s
+      timeout: 10s
+      retries: 12
+      start_period: 900s
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  # ── Gemma 3 4B-it vision service (llama.cpp/GGUF backend) ───────────────────
+  gemma-vl:
+    image: gemma-vl-service
+    container_name: optimus_gemma_vl
+    restart: unless-stopped
+    expose:
+      - "8500"
+    volumes:
+      - type: bind
+        source: ./model_cache
+        target: /models
+    environment:
+      GEMMA_VL_REPO_ID: "ggml-org/gemma-3-4b-it-GGUF"
+      GEMMA_VL_MODEL_FILE: "gemma-3-4b-it-Q4_K_M.gguf"
+      GEMMA_VL_MMPROJ_FILE: "mmproj-model-f16.gguf"
+      GEMMA_VL_MODEL_PATH: "/models/models--ggml-org--gemma-3-4b-it-GGUF/snapshots/d0976223747697cb51e056d85c532013931fe52e/gemma-3-4b-it-Q4_K_M.gguf"
+      GEMMA_VL_MMPROJ_PATH: "/models/models--ggml-org--gemma-3-4b-it-GGUF/snapshots/d0976223747697cb51e056d85c532013931fe52e/mmproj-model-f16.gguf"
+      HF_HOME: "/models"
+      HF_HUB_OFFLINE: "${GEMMA_HF_HUB_OFFLINE:-1}"
+      HF_TOKEN: "${HF_TOKEN:-}"
+      PORT: "8500"
+      LOG_LEVEL: "INFO"
+      LLAMA_N_THREADS: "12"
+      LLAMA_N_THREADS_BATCH: "12"
+      LLAMA_N_CTX: "4096"
+      LLAMA_N_BATCH: "1024"
+      GEMMA_MAX_NEW_TOKENS: "512"
+      GEMMA_VL_DPI: "100"
+    mem_limit: 20g
+    networks:
+      - optimus
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8500/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 300s
+
+  # ── Qwen3-VL-8B GGUF vision sidecar (llama.cpp server) ──────────────────────
+  # --no-mmap forces a full upfront load into RAM (resident, faster inference).
+  qwen3vl:
+    image: ${QWEN3VL_LLAMA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
+    container_name: optimus_qwen3vl
+    restart: unless-stopped
+    mem_limit: 25g
+    volumes:
+      - type: bind
+        source: ./model_cache
+        target: /models
+    environment:
+      LLAMA_CACHE: "/models/llama"
+    command: >
+      -m /models/qwen3vl/Qwen3VL-8B-Instruct-Q4_K_M.gguf
+      --mmproj /models/qwen3vl/mmproj-Qwen3VL-8B-Instruct-F16.gguf
+      --host 0.0.0.0
+      --port 8600
+      --ctx-size 4096
+      --threads 12
+      --parallel 1
+      --no-mmproj-offload
+      --n-gpu-layers 99
+      --temp 0.2
+      --top-k 20
+      --top-p 0.8
+      -n 2048
+    expose:
+      - "8600"
+    networks:
+      - optimus
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8600/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 8
+      start_period: 240s
+    # ── GPU passthrough: reserve 1 NVIDIA device for this sidecar ──
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # ── Qwen3.5-4B GGUF vision sidecar (llama.cpp server) — NEW ─────────────────
+  # Sibling of qwen3vl on the NEWER Qwen3.5 model. CRITICAL: needs a NEWER
+  # llama.cpp build than qwen3vl's b6907 (b6907 predates Qwen3.5 and CANNOT load
+  # its GGUF+mmproj). Pinned to b9828 (current) via QWEN35_LLAMA_IMAGE. The
+  # qwen3vl service keeps b6907, untouched. ~half the 8B's CPU latency. Internal
+  # only (expose, not ports) — like every other model sidecar on the VM.
+  # Reasoning left OFF (Qwen3.5 small-series default) for deterministic JSON.
+  #
+  # NOTE: this is a PUBLIC image pulled on the VM (not a docker-save/load image),
+  # so no `docker load` is needed for it — just `docker compose pull qwen35` or
+  # let `up` pull it. Place the GGUF + mmproj under ./model_cache/qwen35/ first.
+  qwen35:
+    image: ${QWEN35_LLAMA_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
+    container_name: optimus_qwen35
+    restart: unless-stopped
+    mem_limit: 18g
+    volumes:
+      - type: bind
+        source: ./model_cache
+        target: /models
+    environment:
+      LLAMA_CACHE: "/models/llama"
+    command: >
+      -m /models/qwen35/Qwen3.5-4B-Q4_K_M.gguf
+      --mmproj /models/qwen35/mmproj-F16.gguf
+      --host 0.0.0.0
+      --port 8800
+      --ctx-size 4096
+      --threads 12
+      --parallel 1
+      --no-mmproj-offload
+      --n-gpu-layers 99
+      --temp 0.1
+      --top-k 20
+      --top-p 0.8
+      --predict 2048
+      --reasoning off
+    expose:
+      - "8800"
+    networks:
+      - optimus
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8800/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 8
+      start_period: 240s
+    # ── GPU passthrough: reserve 1 NVIDIA device for this sidecar ──
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # ── MinerU reader sidecar (document parser → Markdown) ──────────────────────
+  mineru-service:
+    image: mineru-service
+    container_name: optimus_mineru
+    restart: unless-stopped
+    expose:
+      - "8700"
+    volumes:
+      - type: bind
+        source: ./model_cache
+        target: /models
+    environment:
+      PORT: "8700"
+      LOG_LEVEL: "INFO"
+      MINERU_BACKEND: "pipeline"
+      MINERU_DEVICE_MODE: "cpu"
+      MINERU_LANG: "el"
+      HF_HOME: "/models"
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      OMP_NUM_THREADS: "10"
+    mem_limit: 16g
+    networks:
+      - optimus
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8700/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 300s
+
+  # ── Node.js app (React + Express + tRPC) — the ONLY public service ──────────
+  app:
+    image: optimus-app
+    container_name: optimus-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      DATABASE_URL: "mysql://root:${MYSQL_ROOT_PASSWORD:-optimus123}@mysql:3306/invoice_automation"
+      VLM_SERVICE_URL: "http://vlm:8100"
+      JWT_SECRET: "${JWT_SECRET:?Set JWT_SECRET in .env — generate a 64-char hex}"
+      VLM_ENGINE: "${VLM_ENGINE:-auto}"
+      VLM_TIMEOUT: "600000"
+      BUSINESS_PORTAL_API_KEY: "${BUSINESS_PORTAL_API_KEY:-}"
+    volumes:
+      - uploads:/app/uploads
+      - type: bind
+        source: ./data/client_profiles
+        target: /app/data/client_profiles
+    depends_on:
+      mysql:
+        condition: service_healthy
+      vlm:
+        condition: service_healthy
+    networks:
+      - optimus
+
+volumes:
+  mysql-data:
+  vlm-cache:
+  llama-models:
+  uploads:
+
+networks:
+  optimus:
+    external: true
+    name: optimus_ai_net
