@@ -1,0 +1,38 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# paddle-ocr-service requirements (CPU) — LATEST STACK: PaddleOCR 3.7.0
+#
+# Confirmed compatibility (PaddleOCR docs, paddleocr_and_paddlex table):
+#   paddleocr 3.7.x  ->  paddlex >= 3.7.0, < 3.8.0   AND   paddlepaddle >= 3.0.0
+#
+# paddlex is intentionally NOT pinned: paddleocr 3.7.x pins its own paddlex range,
+# so pip resolves a compatible paddlex (~3.7.x) automatically. Do NOT add
+# paddlex==3.1.0 here — that was only for the old paddleocr 3.1.1 build and would
+# conflict with 3.7.0.
+#
+# paddlepaddle: 3.0.0 satisfies ">= 3.0.0". IF PP-OCRv6 models fail to load at
+# runtime with a framework-version error, bump to a newer 3.x CPU build:
+#   pip install "paddlepaddle>=3.1.0" -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
+# (change the line below to `paddlepaddle>=3.1.0` and rebuild).
+#
+# NOTE on the CPU wheel: `pip install paddlepaddle` from PyPI is the CPU build.
+# If PyPI resolution is flaky in your build network, use Baidu's index:
+#   pip install paddlepaddle==3.0.0 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
+# ─────────────────────────────────────────────────────────────────────────────
+paddlepaddle==3.0.0
+paddleocr==3.7.0
+# paddlex[ocr] = REQUIRED. In the 3.7 line, PP-StructureV3's OCR/layout/table deps
+# live behind paddlex's optional [ocr] extra; a plain `paddleocr` install omits them
+# and pipeline init fails with:
+#   paddlex.utils.deps.DependencyError: `PP-StructureV3` requires additional
+#   dependencies. run `pip install "paddlex[ocr]==<PADDLEX_VERSION>"`
+# Pinned to 3.7.2 (the version paddleocr 3.7.0 resolves, inside its 3.7.x range).
+paddlex[ocr]==3.7.2
+
+# ── Service + PDF plumbing (same versions as the other sidecars) ──
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+pdf2image>=1.17.0
+httpx>=0.23.0
+pillow>=10.0
+numpy>=1.24

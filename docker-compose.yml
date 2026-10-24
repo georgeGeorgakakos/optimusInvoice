@@ -62,6 +62,7 @@ services:
       QWEN3VL_SERVICE_URL: "http://qwen3vl:8600"
       QWEN35_SERVICE_URL: "http://qwen35:8800"
       MINERU_SERVICE_URL: "http://mineru-service:8700"
+      PADDLE_OCR_SERVICE_URL: "http://paddle-ocr:8900"
       #QWEN3VL_DPI: "90"
       QWEN3VL_DPI: "85"
       HF_HOME: "/models"
@@ -282,6 +283,53 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 300s
+
+  # ── PaddleOCR PP-StructureV3 + KIE sidecar (CPU) → invoice JSON ──────────────
+  paddle-ocr:
+    build:
+      context: ./paddle-ocr-service
+      dockerfile: Dockerfile
+    image: paddle-ocr-service
+    container_name: optimus_paddle_ocr
+    restart: unless-stopped
+    ports:
+      - "8900:8900"
+    volumes:
+      - type: bind
+        source: ./model_cache
+        target: /models
+    environment:
+      PORT: "8900"
+      LOG_LEVEL: "INFO"
+      # ── PP-StructureV3 (vision half) ──
+      PADDLE_DEVICE: "cpu"
+      PADDLE_LANG: "el"
+      PADDLE_REC_MODEL_NAME: "el_PP-OCRv5_mobile_rec"   # Greek recogniser
+      PADDLE_USE_TABLE: "1"                              # table structure ON (key for line items)
+      PADDLE_USE_DOC_ORIENTATION: "0"                   # OFF for speed on clean invoices
+      PADDLE_USE_DOC_UNWARPING: "0"
+      PADDLE_USE_TEXTLINE_ORIENT: "0"
+      PADDLE_USE_FORMULA: "0"
+      PADDLE_USE_CHART: "0"
+      PADDLE_DPI: "150"
+      PADDLE_MAX_PAGES: "10"
+      PADDLE_PDX_CACHE_HOME: "/models/paddlex"          # offline model store (pre-baked)
+      # ── KIE (language half) — reuse the qwen35 llama-server, no new LLM ──
+      #PADDLE_KIE_BACKEND: "llama_server"                # llama_server | none | ppchatocr
+      PADDLE_KIE_BACKEND: "none"
+      KIE_LLM_URL: "http://qwen35:8800"                 # the existing sidecar
+      KIE_LLM_MAX_TOKENS: "1536"
+      KIE_LLM_TEMP: "0.1"
+      OMP_NUM_THREADS: "10"
+      mem_limit: 8g
+    networks:
+      - optimus
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8900/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 8
       start_period: 300s
 
   # ── Node.js app (React + Express + tRPC) ────────────────────────────────────

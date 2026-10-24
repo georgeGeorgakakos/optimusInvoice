@@ -1,6 +1,21 @@
 # =============================================================================
-#  deployDockerFull.ps1  (rewritten)
+#  deployDockerFull.ps1  (rewritten — adds the paddle-ocr sidecar)
 #  Deploys OptimusInvoice as Docker containers via docker compose.
+#
+#  PaddleOCR additions vs your previous version (all marked  # <PADDLE>):
+#    • STEP 0   : optional PaddleOCR model-cache check (non-fatal)
+#    • STEP 4e  : stage paddle-ocr-service Python from server\python\  <-- the sync
+#    • STEP 5   : smoke tests for the paddle sidecar + the app.py dispatcher
+#    • STEP 6   : "paddle-ocr" added to BOTH $composeServices lists
+#    • STEP 7   : paddle-ocr health probe (informational)
+#    • Summary  : paddle URL line
+#
+#  SOURCE OF TRUTH: like every other service, the paddle Python files live in
+#  server\python\ and are Copy-Verified into paddle-ocr-service\ at deploy time.
+#  Put these files in server\python\ before running:
+#      paddle_ocr_engine.py  paddle_kie.py  paddle_ocr_service.py
+#      paddle_ppchatocr.py   (vision_postprocess.py is already there)
+#  The paddle-ocr-service\ folder keeps only its static Dockerfile + requirements.txt.
 # =============================================================================
 
 $ErrorActionPreference = "Stop"
@@ -102,11 +117,6 @@ if ($missingWheels.Count -gt 0) {
 Write-Ok "Offline wheels present ($($requiredWheels -join ', '))"
 
 # ── MinerU sidecar wheels (mineru-service container — port 8700) ─────────────
-# MinerU runs in its OWN container with a modern stack (torch 2.7 + transformers
-# 4.57 + mineru[pipeline]) that conflicts with vlm-service's pinned Surya 0.6.13
-# deps — same isolation pattern as qwen/gemma. Its offline wheels live in
-# mineru-service\wheels\. If absent, the mineru-service build will FAIL; the rest
-# of the stack still deploys (mineru engine falls back to Surya until it's up).
 $mineruWheelSrc = "$BASE\mineru-service\wheels"
 if (-not (Test-Path (Join-Path $mineruWheelSrc "mineru"))) {
     Write-Warn "MinerU sidecar wheels NOT found in mineru-service\wheels\mineru\ — the mineru-service build will FAIL."
@@ -140,10 +150,6 @@ if ((Test-Path $q3Model) -and (Test-Path $q3Mmproj)) {
 }
 
 # ── Qwen3.5-4B GGUF model cache (qwen35 container — port 8800) ────────────────
-# Mirrors the qwen3vl check above. The qwen35 sidecar needs the Q4_K_M GGUF and
-# its F16 mmproj under model_cache\qwen35\. NOTE: qwen35 uses a NEWER llama.cpp
-# image (server-b9828) than qwen3vl's b6907 — b6907 predates Qwen3.5 and cannot
-# load it. Download-Qwen35.ps1 fetches both files AND pulls the right image.
 $q35Model  = "$BASE\model_cache\qwen35\Qwen3.5-4B-Q4_K_M.gguf"
 $q35Mmproj = "$BASE\model_cache\qwen35\mmproj-F16.gguf"
 if ((Test-Path $q35Model) -and (Test-Path $q35Mmproj)) {
@@ -152,6 +158,23 @@ if ((Test-Path $q35Model) -and (Test-Path $q35Mmproj)) {
     Write-Warn "Qwen3.5-4B GGUF/mmproj NOT found in model_cache\qwen35\ — the qwen35 container will not start."
     Write-Warn "Download once:  .\Download-Qwen35.ps1  (fetches the GGUF + mmproj and the newer llama.cpp image)"
     Write-Warn "(Skip the qwen35 service for now with: docker compose up -d --scale qwen35=0)"
+}
+
+# <PADDLE> ── PaddleOCR model cache (paddle-ocr container — port 8900) ─────────
+# PaddleOCR does NOT use the HF cache. PP-StructureV3 downloads its models from
+# Baidu's model server into PADDLE_PDX_CACHE_HOME (=/models/paddlex) the FIRST
+# time it runs. If the build/runtime host has internet, this happens on the
+# first request automatically. If air-gapped, pre-bake once with
+# .\Download-PaddleModels.ps1 on a networked box and ship model_cache\paddlex.
+# Also note: KIE (direct image->JSON) calls the qwen35 llama-server — if qwen35
+# is not up, paddle-ocr still runs but falls back to feeding Markdown to the
+# vlm-service semantic_extractor instead of returning JSON directly.
+$paddleCached = Test-Path "$BASE\model_cache\paddlex"
+if ($paddleCached) {
+    Write-Ok "PaddleOCR model cache found (model_cache\paddlex)"
+} else {
+    Write-Warn "PaddleOCR models NOT cached in model_cache\paddlex — they will AUTO-DOWNLOAD during STEP 7 warm-up (needs internet on this host)."
+    Write-Warn "Air-gapped host? Run .\Download-PaddleModels.ps1 on a networked box first, then ship model_cache\paddlex."
 }
 
 $suryaDetCached = Test-Path "$BASE\model_cache\hub\models--vikp--surya_det3"
@@ -297,6 +320,8 @@ Copy-Verified "$pySrc\qwen3vl_engine.py"     "$BASE\vlm-service\qwen3vl_engine.p
 Copy-Verified "$pySrc\qwen35_engine.py"      "$BASE\vlm-service\qwen35_engine.py"        "qwen35_engine.py"
 # NOTE: MinerU is NOT staged into vlm-service — it lives in its own mineru-service
 # sidecar (staged in STEP 4d below). vlm-service reaches it over HTTP.
+# NOTE: paddle-ocr is likewise its own sidecar (staged in STEP 4e). vlm-service
+# reaches it over HTTP at :8900.
 
 # ── 4b. qwen-vl-service ──────────────────────────────────────────────────────
 if ($DeployQwenVl) {
@@ -349,8 +374,6 @@ if (-not $llamaWheel) {
 Write-Ok "Gemma context ready at .\gemma-vl-service\ (llama-cpp-python: $($llamaWheel.Name))"
 
 # ── 4d. mineru-service ───────────────────────────────────────────────────────
-# The MinerU reader sidecar. Isolated modern stack (torch 2.7 + transformers
-# 4.57 + mineru[pipeline]); reached by vlm-service over HTTP at :8700.
 Write-Step "Staging mineru-service build context (.\mineru-service)..."
 $mineruDir = "$BASE\mineru-service"
 if (-not (Test-Path $mineruDir)) { New-Item -ItemType Directory -Force -Path $mineruDir | Out-Null }
@@ -362,6 +385,29 @@ if ($script:MineruWheelsReady) {
 } else {
     Write-Warn "mineru-service context staged, but wheels are MISSING — its build will fail until you run .\Download-MineruWheels.ps1 (or scale it to 0)."
 }
+
+# <PADDLE> ── 4e. paddle-ocr-service ──────────────────────────────────────────
+# PaddleOCR PP-StructureV3 + KIE sidecar (CPU) → invoice JSON. Reached by
+# vlm-service over HTTP at :8900. Python source-of-truth is server\python\ (same
+# pattern as every other service). The Dockerfile + requirements.txt are STATIC
+# inside paddle-ocr-service\ (not synced) — only the .py files are staged here.
+# vision_postprocess.py is staged too so the KIE step can run the same
+# number/VAT-hallucination guards as the qwen/gemma paths.
+Write-Step "Staging paddle-ocr-service build context (.\paddle-ocr-service)..."
+$paddleDir = "$BASE\paddle-ocr-service"
+if (-not (Test-Path $paddleDir)) { New-Item -ItemType Directory -Force -Path $paddleDir | Out-Null }
+if (-not (Test-Path "$paddleDir\Dockerfile")) {
+    Write-Fail "paddle-ocr-service\Dockerfile missing — did you place the paddle-ocr-service\ folder?"; exit 1
+}
+if (-not (Test-Path "$paddleDir\requirements.txt")) {
+    Write-Fail "paddle-ocr-service\requirements.txt missing — did you place the paddle-ocr-service\ folder?"; exit 1
+}
+Copy-Verified "$pySrc\paddle_ocr_engine.py"  "$paddleDir\paddle_ocr_engine.py"  "paddle_ocr_engine.py"
+Copy-Verified "$pySrc\paddle_kie.py"         "$paddleDir\paddle_kie.py"         "paddle_kie.py"
+Copy-Verified "$pySrc\paddle_ocr_service.py" "$paddleDir\paddle_ocr_service.py" "paddle_ocr_service.py"
+Copy-Verified "$pySrc\paddle_ppchatocr.py"   "$paddleDir\paddle_ppchatocr.py"   "paddle_ppchatocr.py"
+Copy-Verified "$pySrc\vision_postprocess.py" "$paddleDir\vision_postprocess.py" "vision_postprocess.py"
+Write-Ok "paddle-ocr-service context ready at .\paddle-ocr-service\"
 
 # =============================================================================
 # STEP 5 — Smoke tests
@@ -378,6 +424,11 @@ if ($appContent -notmatch "semantic_extractor") { Write-Fail "SMOKE: app.py miss
 if ($appContent -notmatch "gemma_vl_local")     { Write-Fail "SMOKE: app.py missing gemma_vl_local dispatcher"; exit 1 }
 if ($appContent -notmatch "qwen35_local")       { Write-Warn "SMOKE: app.py missing qwen35_local dispatcher — the Qwen3.5 engine will not be reachable (non-fatal)" }
 else                                            { Write-Ok "qwen35_local dispatcher present in app.py" }
+# <PADDLE> app.py must know the paddle_ocr engine (dispatch branch + proxy helper)
+if ($appContent -notmatch "paddle_ocr")         { Write-Warn "SMOKE: app.py missing paddle_ocr dispatcher — the PaddleOCR engine will not be reachable (non-fatal). Re-apply the vlm_service.py edits." }
+else                                            { Write-Ok "paddle_ocr dispatcher present in app.py" }
+if ($appContent -notmatch "PADDLE_OCR_SERVICE_URL") { Write-Warn "SMOKE: app.py missing PADDLE_OCR_SERVICE_URL — the proxy target env is not wired (non-fatal)" }
+else                                            { Write-Ok "PADDLE_OCR_SERVICE_URL wired in app.py" }
 if ($parContent.Length -lt 1000)               { Write-Fail "SMOKE: vlm_invoice_parser too small"; exit 1 }
 if ($semContent -notmatch '_validate_extraction') {
     Write-Warn "semantic_extractor.py missing _validate_extraction() — extraction quality degraded (non-fatal)"
@@ -391,6 +442,14 @@ if (Test-Path "$BASE\mineru-service\mineru_service.py") {
     Write-Ok "MinerU sidecar staged (mineru-service\ — reached over HTTP at :8700; falls back to Surya if down)"
 } else {
     Write-Warn "mineru-service\mineru_service.py not staged — the mineru engine will fall back to Surya."
+}
+
+# <PADDLE> ── paddle-ocr sidecar wiring guard ────────────────────────────────
+$paddleSvc = Get-Content "$BASE\paddle-ocr-service\paddle_ocr_service.py" -Raw
+if ($paddleSvc -notmatch "extract.pdf") {
+    Write-Warn "SMOKE: paddle_ocr_service.py missing /extract-pdf (non-fatal)"
+} else {
+    Write-Ok "paddle-ocr sidecar staged (paddle-ocr-service\ — reached over HTTP at :8900; KIE via qwen35)"
 }
 
 # ── Vision-validator wiring guard ────────────────────────────────────────────
@@ -418,13 +477,15 @@ New-Item -ItemType Directory -Force -Path "$BASE\model_cache"          | Out-Nul
 
 Write-Step "Running docker compose up --build -d ..."
 Write-Warn "First run builds images and downloads Surya weights inside the vlm container."
+Write-Warn "First paddle-ocr build compiles paddlepaddle/paddleocr from PyPI (needs internet on the build host)."
 Write-Warn "If Qwen3-VL/Gemma not cached: runtime download adds time."
 Write-Warn "Subsequent runs reuse cached layers and start in 1-2 min."
 
+# <PADDLE> "paddle-ocr" added to BOTH branches of the service list.
 if ($DeployQwenVl) {
-    $composeServices = @("mysql", "vlm", "qwen-vl", "gemma-vl", "qwen3vl", "qwen35", "mineru-service", "app")
+    $composeServices = @("mysql", "vlm", "qwen-vl", "gemma-vl", "qwen3vl", "qwen35", "mineru-service", "paddle-ocr", "app")
 } else {
-    $composeServices = @("mysql", "vlm", "gemma-vl", "qwen3vl", "qwen35", "mineru-service", "app")
+    $composeServices = @("mysql", "vlm", "gemma-vl", "qwen3vl", "qwen35", "mineru-service", "paddle-ocr", "app")
     docker compose stop qwen-vl 2>$null | Out-Null
     docker compose rm -f qwen-vl 2>$null | Out-Null
 }
@@ -481,11 +542,49 @@ while ($waited -lt $maxWait) {
 }
 if ($appReady) { Write-Ok "App is up!" } else { Write-Warn "App did not respond after ${maxWait}s — docker compose logs app" }
 
+# <PADDLE> ── PaddleOCR warm-up wait (auto model download on first run) ────────
+# The paddle-ocr container warms PP-StructureV3 in a background thread on boot,
+# which DOWNLOADS the models into the bind-mounted model_cache\paddlex the FIRST
+# time — nothing else to run. This replaces a separate Download-PaddleModels.ps1
+# for hosts with internet: we just wait for /health ready:true so the cache is
+# fully populated before the deploy reports done. On every FUTURE deploy the
+# cache already exists and this returns in seconds.
+$paddleCacheDir = "$BASE\model_cache\paddlex"
+$paddleFirstRun = (-not (Test-Path $paddleCacheDir)) -or `
+                  ((Get-ChildItem $paddleCacheDir -Recurse -File -ErrorAction SilentlyContinue | Measure-Object).Count -eq 0)
+if ($paddleFirstRun) {
+    Write-Step "Waiting for paddle-ocr FIRST-RUN model download (PP-StructureV3 -> model_cache\paddlex)..."
+    Write-Warn "First run downloads PaddleOCR models (needs internet on this host). This can take several minutes."
+    $maxWait = 900
+} else {
+    Write-Step "Waiting for paddle-ocr (models already cached in model_cache\paddlex)..."
+    $maxWait = 300
+}
+$waited = 0; $paddleReady = $false
+while ($waited -lt $maxWait) {
+    Start-Sleep -Seconds 10; $waited += 10
+    try {
+        $resp = Invoke-RestMethod -Uri "http://localhost:8900/health" -TimeoutSec 3 -ErrorAction Stop
+        if ($resp.ready -eq $true) { $paddleReady = $true; break }
+        Write-Host "  ...paddle-ocr loading (ready=$($resp.ready)) ($waited`s / $maxWait`s)" -ForegroundColor DarkGray
+    } catch {
+        Write-Host "  ...paddle-ocr starting ($waited`s / $maxWait`s)" -ForegroundColor DarkGray
+    }
+}
+if ($paddleReady) {
+    Write-Ok "PaddleOCR ready — models cached in model_cache\paddlex (reused on every future deploy)"
+} else {
+    Write-Warn "paddle-ocr not ready after ${maxWait}s — docker logs -f optimus_paddle_ocr"
+    Write-Warn "If this host is AIR-GAPPED, the model download cannot run here. Pre-bake on a"
+    Write-Warn "networked box with .\Download-PaddleModels.ps1 and ship model_cache\paddlex over."
+}
+
 Write-Step "Checking optional vision services (informational only)..."
 $gemmaHealth = docker inspect -f "{{.State.Health.Status}}" optimus_gemma_vl 2>$null
 $qwen3Health = docker inspect -f "{{.State.Health.Status}}" optimus_qwen3vl  2>$null
 $qwen35Health = docker inspect -f "{{.State.Health.Status}}" optimus_qwen35  2>$null
 $mineruHealth = docker inspect -f "{{.State.Health.Status}}" optimus_mineru  2>$null
+$paddleHealth = docker inspect -f "{{.State.Health.Status}}" optimus_paddle_ocr 2>$null   # <PADDLE>
 if ($DeployQwenVl) {
     $qwenHealth = docker inspect -f "{{.State.Health.Status}}" optimus_qwen_vl 2>$null
     Write-Host "    qwen-vl  : $qwenHealth"  -ForegroundColor DarkGray
@@ -495,10 +594,13 @@ Write-Host "    gemma-vl : $gemmaHealth" -ForegroundColor DarkGray
 Write-Host "    qwen3vl  : $qwen3Health" -ForegroundColor DarkGray
 Write-Host "    qwen35   : $qwen35Health" -ForegroundColor DarkGray
 Write-Host "    mineru   : $mineruHealth" -ForegroundColor DarkGray
+Write-Host "    paddle   : $paddleHealth" -ForegroundColor DarkGray   # <PADDLE>
 if ($gemmaHealth -ne "healthy") { Write-Warn "Gemma 3 still loading    — docker logs -f optimus_gemma_vl" }
 if ($qwen3Health -ne "healthy") { Write-Warn "Qwen3-VL-8B still loading — docker logs -f optimus_qwen3vl" }
 if ($qwen35Health -ne "healthy") { Write-Warn "Qwen3.5-4B still loading  — docker logs -f optimus_qwen35" }
 if ($mineruHealth -ne "healthy") { Write-Warn "MinerU still loading     — docker logs -f optimus_mineru" }
+# <PADDLE> paddle-ocr first run downloads PP-StructureV3 models — can take minutes.
+if ($paddleHealth -ne "healthy") { Write-Warn "PaddleOCR still loading   — docker logs -f optimus_paddle_ocr (first run downloads PP-StructureV3 models)" }
 
 # =============================================================================
 # STEP 8 — Seed default engine config
@@ -558,12 +660,14 @@ Write-Host "  GemmaVL  : http://localhost:8500/health  (Gemma 3 4B-it GGUF)" -Fo
 Write-Host "  Qwen3VL  : http://localhost:8600/health  (Qwen3-VL-8B GGUF)" -ForegroundColor Cyan
 Write-Host "  Qwen35   : http://localhost:8800/health  (Qwen3.5-4B GGUF)" -ForegroundColor Cyan
 Write-Host "  MinerU   : http://localhost:8700/health  (MinerU reader sidecar)" -ForegroundColor Cyan
+Write-Host "  Paddle   : http://localhost:8900/health  (PaddleOCR PP-StructureV3 + KIE)" -ForegroundColor Cyan   # <PADDLE>
 Write-Host "  MySQL    : localhost:3306  (db: invoice_automation)" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  Useful commands:" -ForegroundColor DarkGray
-Write-Host "    docker compose logs -f app          # app logs (tail)" -ForegroundColor DarkGray
-Write-Host "    docker compose logs -f vlm          # OCR + semantic logs" -ForegroundColor DarkGray
+Write-Host "    docker compose logs -f app             # app logs (tail)" -ForegroundColor DarkGray
+Write-Host "    docker compose logs -f vlm             # OCR + semantic logs" -ForegroundColor DarkGray
 Write-Host "    docker compose logs -f mineru-service  # MinerU reader logs" -ForegroundColor DarkGray
-Write-Host "    docker compose ps                   # all container statuses" -ForegroundColor DarkGray
-Write-Host "    docker compose down                 # stop everything" -ForegroundColor DarkGray
+Write-Host "    docker compose logs -f paddle-ocr      # PaddleOCR sidecar logs" -ForegroundColor DarkGray
+Write-Host "    docker compose ps                      # all container statuses" -ForegroundColor DarkGray
+Write-Host "    docker compose down                    # stop everything" -ForegroundColor DarkGray
 Write-Host ""

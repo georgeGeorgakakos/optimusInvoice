@@ -266,6 +266,7 @@ function VlmStatusPanel() {
     qwen3vl_local: "Qwen3-VL-8B",       // NEW — Q5_K_M GGUF llama-server sidecar :8600
     qwen35_local: "Qwen3.5-4B",         // NEW — Q4_K_M GGUF llama-server sidecar :8800 (newer llama.cpp)
     mineru: "MinerU (pipeline)",         // NEW — CPU document parser → Markdown → semantic
+    paddle_ocr: "PaddleOCR (PP-StructureV3)", // NEW — CPU tables → KIE (llama-server) → invoice JSON :8900
   };
 
   if (isLoading) {
@@ -990,6 +991,10 @@ export default function Configuration() {
                   <option value="mineru">
                     MinerU — CPU document parser → Markdown → semantic (reader, not vision-to-JSON)
                   </option>
+                  {/* NEW — PaddleOCR PP-StructureV3 + KIE sidecar on port 8900 */}
+                  <option value="paddle_ocr">
+                    PaddleOCR — CPU table-aware parse (PP-StructureV3) → KIE → invoice JSON
+                  </option>
                   <option value="got_ocr2" disabled style={{color:"#94a3b8"}}>
                     GOT-OCR2 — not available (conflicts with transformers 4.52)
                   </option>
@@ -1035,6 +1040,14 @@ export default function Configuration() {
                     key: "mineru",
                     label: "MinerU (pipeline)",
                     desc: "Document parser — converts the PDF to Markdown (tables as HTML), then the semantic extractor maps it to the invoice schema. Reader, not vision-to-JSON. Pure CPU, hallucination-free. Run: pip install \"mineru[core]\".",
+                    tag: "local",
+                    available: true,
+                  },
+                  // NEW — PaddleOCR PP-StructureV3 + KIE sidecar (:8900)
+                  {
+                    key: "paddle_ocr",
+                    label: "PaddleOCR (PP-StructureV3)",
+                    desc: "Reconstructs real invoice table structure (rows/cols) via PP-StructureV3, then the KIE step maps it to invoice JSON using the local qwen35 llama-server. Greek via el_PP-OCRv5_mobile_rec. Pure CPU, offline. Pre-cache models with Download-PaddleModels.ps1.",
                     tag: "local",
                     available: true,
                   },

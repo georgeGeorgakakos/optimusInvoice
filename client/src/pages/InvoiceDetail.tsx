@@ -1034,7 +1034,8 @@ export default function InvoiceDetail() {
                   const method   = extractedData._vlm_extraction_method || "unknown";
                   const isNative = method === "native_text";
                   const isOcr    = method === "ocr_image";
-                  const label    = isNative ? "📄 Text PDF" : isOcr ? `🔍 ${extractedData._vlm_engine.toUpperCase()}` : `🤖 ${extractedData._vlm_engine.toUpperCase()}`;
+                  const isPaddle = method === "paddle_ocr";
+                  const label    = isNative ? "📄 Text PDF" : isOcr ? `🔍 ${extractedData._vlm_engine.toUpperCase()}` : isPaddle ? `🧩 ${extractedData._vlm_engine.toUpperCase()}` : `🤖 ${extractedData._vlm_engine.toUpperCase()}`;
                   const style    = isNative
                       ? "bg-emerald-50 text-emerald-700 border-emerald-200"
                       : isOcr
@@ -1289,9 +1290,9 @@ export default function InvoiceDetail() {
             try { hasSteps = Array.isArray(JSON.parse(sj || "[]")) && JSON.parse(sj || "[]").length > 0; } catch {}
             if (!hasSteps && !isProcessing) return null;
             return (
-              <div className="bg-white rounded-xl border border-slate-200 p-4">
-                <ProcessingTimeline stepsJson={sj} status={invoice.status} />
-              </div>
+                <div className="bg-white rounded-xl border border-slate-200 p-4">
+                  <ProcessingTimeline stepsJson={sj} status={invoice.status} />
+                </div>
             );
           })()}
 

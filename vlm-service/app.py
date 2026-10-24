@@ -59,6 +59,7 @@ GEMMA_VL_SERVICE_URL  = os.getenv("GEMMA_VL_SERVICE_URL", "http://gemma-vl-servi
 QWEN3VL_SERVICE_URL   = os.getenv("QWEN3VL_SERVICE_URL",  "http://qwen3vl:8600")            # llama-server sidecar
 QWEN35_SERVICE_URL    = os.getenv("QWEN35_SERVICE_URL",   "http://qwen35:8800")             # Qwen3.5-4B llama-server sidecar (newer llama.cpp)
 MINERU_SERVICE_URL    = os.getenv("MINERU_SERVICE_URL",   "http://mineru-service:8700")     # MinerU reader sidecar
+PADDLE_OCR_SERVICE_URL = os.getenv("PADDLE_OCR_SERVICE_URL", "http://paddle-ocr:8900")       # PaddleOCR PP-StructureV3 + KIE sidecar (CPU)
 
 # ── HTML tag stripper (Surya sometimes emits <b>text</b>) ────────────────────
 _HTML_TAG_RE = re.compile(r'<[^>]+>')
@@ -273,6 +274,7 @@ class Engine(str, Enum):
     qwen3vl_local  = "qwen3vl_local"    # local CPU — Qwen3-VL-8B Q5_K_M GGUF via llama-server sidecar
     qwen35_local   = "qwen35_local"     # local CPU — Qwen3.5-4B Q4_K_M GGUF via llama-server sidecar (newer llama.cpp)
     mineru         = "mineru"           # local CPU — MinerU pipeline backend → Markdown → semantic_extractor
+    paddle_ocr     = "paddle_ocr"       # local CPU — PaddleOCR PP-StructureV3 → KIE (llama-server) → invoice JSON
     auto           = "auto"
 
 
@@ -418,6 +420,49 @@ async def _mineru_available() -> bool:
     except Exception:  # noqa: BLE001
         pass
     return False
+
+
+async def _proxy_paddle_ocr(
+        pdf_bytes: bytes,
+        filename: str,
+        extract_invoice: str,
+) -> Dict[str, Any]:
+    """
+    Proxy to the paddle-ocr sidecar (port 8900).
+
+    The sidecar runs PP-StructureV3 (CPU) → layout-aware Markdown, then (unless
+    disabled) a KIE step against the qwen35 llama-server → invoice JSON. It
+    returns BOTH, so the caller can:
+      • use `structured` directly (Path B — image→JSON), OR
+      • fall back to feeding `markdown` to the local semantic_extractor
+        (Path A) when structured is null.
+
+    Returns {} on any failure so the caller can fall back to Surya. Handles the
+    503 "model still loading" convention with a retry loop, like the others.
+    """
+    url = f"{PADDLE_OCR_SERVICE_URL}/extract-pdf"
+    log.info(f"[Paddle-Proxy] Forwarding {len(pdf_bytes)} bytes to {url}")
+    try:
+        async with httpx.AsyncClient(timeout=1800.0) as _client:
+            for _attempt in range(30):
+                _resp = await _client.post(
+                    url,
+                    files={"file": (filename or "invoice.pdf", pdf_bytes, "application/pdf")},
+                    data={"engine": "paddle_ocr", "language": "el",
+                          "extract_invoice": extract_invoice},
+                )
+                if _resp.status_code == 503:
+                    log.info(f"[Paddle-Proxy] Model still loading "
+                             f"(attempt {_attempt+1}/30) — retrying in 10s ...")
+                    await asyncio.sleep(10)
+                    continue
+                _resp.raise_for_status()
+                return _resp.json()
+        log.warning("[Paddle-Proxy] sidecar did not become ready within 5 minutes")
+        return {}
+    except Exception as exc:  # noqa: BLE001
+        log.error(f"[Paddle-Proxy] failed: {exc}", exc_info=True)
+        return {}
 
 
 # --------------------------- engine implementations -------------------------
@@ -659,7 +704,7 @@ async def health():
     return {
         "status":        "ok",
         "device":        DEVICE,
-        "loaded_models": list(_models.keys()) + ["qwen_vl_local", "gemma_vl_local", "qwen3vl_local", "qwen35_local", "mineru"],
+        "loaded_models": list(_models.keys()) + ["qwen_vl_local", "gemma_vl_local", "qwen3vl_local", "qwen35_local", "mineru", "paddle_ocr"],
         "vllm_url":      VLLM_BASE_URL,
         "semantic_llm":  semantic_status,
         "semantic_model": SEMANTIC_MODEL if SEMANTIC_ENABLED else None,
@@ -822,6 +867,64 @@ async def _do_extract_pdf(file, engine, doc_type, extract_invoice, use_native_te
                 error_msg = str(exc)
                 # Surface the real error so Node can log it meaningfully
                 log.error(f"PDF details: {len(pdf_bytes)} bytes, first 4 bytes: {pdf_bytes[:4]}")
+
+    # --- PaddleOCR PP-StructureV3 + KIE (NEW — sidecar port 8900) → invoice JSON ---
+    # PP-StructureV3 (CPU) reconstructs real table structure from the invoice and
+    # emits layout-aware Markdown; the sidecar's KIE step (qwen35 llama-server)
+    # then maps it to the invoice schema. This is the "direct image→JSON" path.
+    #
+    # Dual-mode by design:
+    #   • If the sidecar returns `structured` (KIE ON) → Path B: return it now,
+    #     bypassing the OCR→semantic chain (same as the qwen vision engines).
+    #   • If `structured` is null (PADDLE_KIE_BACKEND=none, or KIE failed) →
+    #     Path A: feed the Markdown into ocr_text so the existing
+    #     semantic_extractor below maps it (same as the MinerU path).
+    #   • If the sidecar is unreachable/empty → fall back to Surya.
+    elif used_engine == "paddle_ocr":
+        _pp = await _proxy_paddle_ocr(pdf_bytes, file.filename or "invoice.pdf", extract_invoice)
+        _pp_structured = _pp.get("structured") if isinstance(_pp, dict) else None
+        _pp_markdown   = (_pp.get("markdown") or _pp.get("text") or "") if isinstance(_pp, dict) else ""
+
+        if isinstance(_pp_structured, dict) and _pp_structured:
+            # Path B — the sidecar already produced invoice JSON.
+            structured = validate_vision_extraction(_pp_structured)
+            ocr_text   = _pp_markdown
+            elapsed    = round(time.perf_counter() - t0, 2)
+            log.info(f"extract-pdf: engine=paddle_ocr (Path B), "
+                     f"md_chars={len(_pp_markdown)}, elapsed={elapsed}s")
+            return {
+                "ocr_text":          ocr_text,
+                "text":              ocr_text,
+                "structured":        structured,
+                "engines_used":      ["paddle_ocr"],
+                "extraction_method": "paddle_ocr",
+                "reasoning":         "engine=paddle_ocr → PP-StructureV3 tables → KIE (llama-server) returned structured JSON directly",
+                "elapsed":           elapsed,
+                "engine":            "paddle_ocr",
+            }
+        elif _pp_markdown and len(_pp_markdown.strip()) > 20:
+            # Path A — hand the Markdown to the local semantic_extractor below.
+            ocr_text    = _pp_markdown
+            used_engine = "paddle_ocr"
+            log.info(f"[Paddle] {len(_pp_markdown)} chars of Markdown → semantic_extractor")
+        else:
+            log.warning("[Paddle] empty/failed sidecar output — falling back to Surya")
+            used_engine = "surya"
+            if not ocr_text:
+                try:
+                    from pdf2image import convert_from_bytes
+                    images = convert_from_bytes(pdf_bytes, dpi=200)
+                    parts  = []
+                    for img in images[:MAX_PAGES]:
+                        buf = io.BytesIO()
+                        img.save(buf, format="PNG")
+                        img_b64 = base64.b64encode(buf.getvalue()).decode()
+                        res = _run_surya(img_b64, "el")
+                        parts.append(res.get("text", ""))
+                    ocr_text = "\n\n".join(p for p in parts if p)
+                except Exception as exc:
+                    log.error(f"Surya fallback failed: {exc}", exc_info=True)
+                    error_msg = str(exc)
 
     # --- MinerU pipeline reader (pure-CPU) → Markdown → semantic_extractor ---
     # MinerU is a *reader*: it converts the PDF to Markdown (tables as HTML,
