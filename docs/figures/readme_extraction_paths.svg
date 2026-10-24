@@ -1,0 +1,179 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 600" width="1280" height="600" font-family="'Segoe UI', -apple-system, 'Helvetica Neue', Arial, sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#047857"/>
+    </marker>
+    <marker id="an" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1e3a5f"/>
+    </marker>
+    <filter id="sh" x="-5%" y="-5%" width="110%" height="115%">
+      <feDropShadow dx="0" dy="1.5" stdDeviation="2" flood-color="#0f1629" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+
+  <rect width="1280" height="600" rx="14" fill="#f8fafc"/>
+  <rect width="1280" height="56" rx="14" fill="#0f1629"/>
+  <rect y="36" width="1280" height="20" fill="#0f1629"/>
+  <text x="28" y="27" font-size="19" font-weight="700" fill="#fff">How a PDF becomes invoice JSON</text>
+  <text x="28" y="46" font-size="12.5" fill="#cbd5e1">vlm-service <tspan font-family="Consolas, Menlo, monospace">/extract-pdf</tspan> routes by the engine chosen in Configuration → VLM / AI Extraction Engines</text>
+
+  <!-- lanes -->
+  <rect x="200" y="72" width="840" height="262" rx="12" fill="#ecfdf5" stroke="#a7f3d0"/>
+  <text x="216" y="94" font-size="11.5" font-weight="700" fill="#047857" letter-spacing="1">PATH A — READ, THEN UNDERSTAND</text>
+  <rect x="200" y="348" width="840" height="236" rx="12" fill="#eef2f8" stroke="#c7d2e3"/>
+  <text x="216" y="370" font-size="11.5" font-weight="700" fill="#1e3a5f" letter-spacing="1">PATH B — SEE AND ANSWER (VISION MODELS)</text>
+
+  <!-- input -->
+  <rect x="24" y="270" width="150" height="96" rx="12" fill="#ffffff" stroke="#0f1629" stroke-width="1.6" filter="url(#sh)"/>
+  <text x="99" y="300" font-size="14" font-weight="700" fill="#0f1629" text-anchor="middle">PDF</text>
+  <text x="99" y="320" font-size="12" fill="#475569" text-anchor="middle">+ engine</text>
+  <text x="99" y="338" font-size="12" fill="#475569" text-anchor="middle">+ use_native_text</text>
+  <text x="99" y="355" font-size="11" fill="#94a3b8" text-anchor="middle">from queue worker</text>
+
+  <g font-size="12">
+    <!-- A: auto/surya -->
+    <rect x="216" y="106" width="176" height="74" rx="10" fill="#fff" stroke="#047857" filter="url(#sh)"/>
+    <text x="228" y="127" font-weight="700" fill="#047857">auto · surya</text>
+    <text x="228" y="146" fill="#334155">pdfplumber pre-flight</text>
+    <text x="228" y="164" fill="#64748b">&gt; 50 chars of real text?</text>
+
+    <!-- A: explicit readers -->
+    <rect x="216" y="236" width="176" height="74" rx="10" fill="#fff" stroke="#047857" filter="url(#sh)"/>
+    <text x="228" y="257" font-weight="700" fill="#047857">mineru · paddle_ocr</text>
+    <text x="228" y="276" fill="#334155">explicit reader choice</text>
+    <text x="228" y="294" fill="#64748b">(paddle with KIE off)</text>
+
+    <!-- A outcomes -->
+    <rect x="424" y="104" width="186" height="40" rx="8" fill="#fff" stroke="#a7f3d0"/>
+    <text x="436" y="129" fill="#065f46"><tspan font-weight="700">yes</tspan> → native text <tspan fill="#94a3b8">&lt;1 s</tspan></text>
+    <rect x="424" y="152" width="186" height="40" rx="8" fill="#fff" stroke="#a7f3d0"/>
+    <text x="436" y="177" fill="#065f46"><tspan font-weight="700">no</tspan> → MinerU if healthy</text>
+    <rect x="424" y="200" width="186" height="40" rx="8" fill="#fff" stroke="#a7f3d0"/>
+    <text x="436" y="225" fill="#065f46">else / empty → Surya OCR</text>
+    <rect x="424" y="248" width="186" height="62" rx="8" fill="#fff" stroke="#a7f3d0"/>
+    <text x="436" y="270" fill="#065f46">MinerU / PP-StructureV3</text>
+    <text x="436" y="288" fill="#64748b">Markdown, tables as HTML</text>
+    <text x="436" y="304" fill="#94a3b8" font-size="11">→ Surya if sidecar fails</text>
+
+    <!-- A semantic -->
+    <rect x="642" y="118" width="184" height="86" rx="10" fill="#f5f3ff" stroke="#7c3aed" filter="url(#sh)"/>
+    <text x="654" y="140" font-weight="700" fill="#4c1d95">Semantic LLM</text>
+    <text x="654" y="159" fill="#334155">Qwen2.5-3B Q4_K_M</text>
+    <text x="654" y="177" fill="#334155">llama-cpp · temp 0</text>
+    <text x="654" y="195" fill="#64748b">waits ≤180 s for model load</text>
+
+    <rect x="642" y="232" width="184" height="66" rx="10" fill="#fff" stroke="#cbd5e1"/>
+    <text x="654" y="254" font-weight="700" fill="#0f1629">Regex fallback</text>
+    <text x="654" y="272" fill="#64748b">vlm_invoice_parser.py</text>
+    <text x="654" y="289" fill="#64748b">8 layout formats</text>
+
+    <!-- A validation -->
+    <rect x="852" y="106" width="172" height="204" rx="10" fill="#fefce8" stroke="#d97706" filter="url(#sh)"/>
+    <text x="864" y="128" font-weight="700" fill="#713f12">Text-path checks</text>
+    <text x="864" y="150" fill="#334155">• EU/US number repair</text>
+    <text x="864" y="170" fill="#334155">• VAT hallucination guard</text>
+    <text x="864" y="190" fill="#334155">• totals reconciliation</text>
+    <text x="864" y="210" fill="#334155">• client_profile:</text>
+    <text x="876" y="228" fill="#64748b">who is the recipient</text>
+    <text x="864" y="248" fill="#334155">• myDATA MARK / UID</text>
+    <text x="864" y="268" fill="#334155">• dispatch date / vehicle</text>
+    <text x="864" y="292" fill="#64748b" font-size="11">confidence score 0–100</text>
+
+    <!-- B engines -->
+    <rect x="216" y="384" width="176" height="184" rx="10" fill="#fff" stroke="#1e3a5f" filter="url(#sh)"/>
+    <text x="228" y="406" font-weight="700" fill="#1e3a5f">Vision engines</text>
+    <g font-family="Consolas, Menlo, monospace" font-size="11.5" fill="#334155">
+      <text x="228" y="430">qwen_vl_local</text>
+      <text x="228" y="452">gemma_vl_local</text>
+      <text x="228" y="474">qwen3vl_local</text>
+      <text x="228" y="496">qwen35_local</text>
+      <text x="228" y="518">paddle_ocr</text>
+    </g>
+    <text x="324" y="518" fill="#94a3b8" font-size="11">(KIE on)</text>
+    <text x="228" y="550" fill="#64748b" font-size="11">ignore use_native_text</text>
+
+    <rect x="424" y="400" width="186" height="104" rx="10" fill="#fff" stroke="#c7d2e3"/>
+    <text x="436" y="422" font-weight="700" fill="#1e3a5f">Page → image → JSON</text>
+    <text x="436" y="442" fill="#334155">pdf2image at 85–110 DPI</text>
+    <text x="436" y="460" fill="#334155">one prompt, invoice schema</text>
+    <text x="436" y="478" fill="#334155">no OCR, no semantic step</text>
+    <text x="436" y="496" fill="#64748b" font-size="11">1 – 10+ min / invoice on CPU</text>
+
+    <rect x="642" y="384" width="184" height="86" rx="10" fill="#fff" stroke="#1e3a5f" filter="url(#sh)"/>
+    <text x="654" y="406" font-weight="700" fill="#1e3a5f">vision_postprocess</text>
+    <text x="654" y="425" fill="#334155">number + VAT + currency</text>
+    <text x="654" y="443" fill="#334155">checked against pdfplumber</text>
+    <text x="654" y="461" fill="#64748b">reference text (digital PDFs)</text>
+
+    <rect x="642" y="484" width="184" height="84" rx="10" fill="#fff" stroke="#1e3a5f" filter="url(#sh)"/>
+    <text x="654" y="506" font-weight="700" fill="#1e3a5f">vision_validator</text>
+    <text x="654" y="525" fill="#334155">“flag, never fix”</text>
+    <text x="654" y="543" fill="#334155">issues[] · lower confidence</text>
+    <text x="654" y="561" fill="#64748b">needs_review = true</text>
+
+    <!-- result -->
+    <rect x="852" y="384" width="172" height="184" rx="10" fill="#fff" stroke="#c7d2e3"/>
+    <text x="864" y="406" font-weight="700" fill="#1e3a5f">Response</text>
+    <g font-family="Consolas, Menlo, monospace" font-size="11.5" fill="#334155">
+      <text x="864" y="430">ocr_text</text>
+      <text x="864" y="452">invoice | structured</text>
+      <text x="864" y="474">engines_used</text>
+      <text x="864" y="496">extraction_method</text>
+      <text x="864" y="518">elapsed</text>
+    </g>
+    <text x="864" y="548" fill="#64748b" font-size="11">native_text · ocr_image ·</text>
+    <text x="864" y="562" fill="#64748b" font-size="11">markdown · vlm · paddle_ocr</text>
+
+    <!-- node side -->
+    <rect x="1064" y="152" width="192" height="320" rx="12" fill="#fff" stroke="#E8472A" stroke-width="1.8" filter="url(#sh)"/>
+    <rect x="1064" y="152" width="192" height="40" rx="12" fill="#E8472A"/>
+    <rect x="1064" y="176" width="192" height="16" fill="#E8472A"/>
+    <text x="1078" y="177" font-weight="700" fill="#fff" font-size="13">Node · invoiceProcessor</text>
+    <text x="1078" y="214" fill="#334155">detectDocumentType()</text>
+    <text x="1078" y="240" font-weight="700" fill="#0f1629">invoice / credit note</text>
+    <text x="1090" y="258" fill="#475569">line items saved</text>
+    <text x="1090" y="276" fill="#475569">ML product match</text>
+    <text x="1090" y="294" fill="#475569">auto-accept ≥ 90 %</text>
+    <text x="1090" y="312" fill="#475569">→ review_needed</text>
+    <text x="1078" y="338" font-weight="700" fill="#0f1629">dispatch note / CMR</text>
+    <text x="1090" y="356" fill="#475569">JSON fields → completed</text>
+    <text x="1078" y="382" font-weight="700" fill="#0f1629">cheque / unknown</text>
+    <text x="1090" y="400" fill="#475569">→ review_needed</text>
+    <text x="1078" y="426" font-weight="700" fill="#0f1629">always</text>
+    <text x="1090" y="444" fill="#475569">JSON archive · OptimusDB</text>
+    <text x="1090" y="462" fill="#475569">push · notification</text>
+  </g>
+
+  <!-- arrows -->
+  <g fill="none" stroke-width="1.6">
+    <path d="M174 300 C190 300 196 143 212 143" stroke="#047857" marker-end="url(#ag)"/>
+    <path d="M174 316 C190 316 196 273 212 273" stroke="#047857" marker-end="url(#ag)"/>
+    <path d="M174 340 C190 340 196 470 212 470" stroke="#1e3a5f" marker-end="url(#an)"/>
+
+    <path d="M392 130 L420 124" stroke="#047857" marker-end="url(#ag)"/>
+    <path d="M392 150 L420 172" stroke="#047857" marker-end="url(#ag)"/>
+    <path d="M392 165 L420 218" stroke="#047857" marker-end="url(#ag)"/>
+    <path d="M392 273 L420 278" stroke="#047857" marker-end="url(#ag)"/>
+
+    <path d="M610 124 C626 124 626 150 638 152" stroke="#047857" marker-end="url(#ag)"/>
+    <path d="M610 172 L638 165" stroke="#047857" marker-end="url(#ag)"/>
+    <path d="M610 220 C626 220 626 180 638 178" stroke="#047857" marker-end="url(#ag)"/>
+    <path d="M610 278 C626 278 626 196 638 192" stroke="#047857" marker-end="url(#ag)"/>
+
+    <path d="M734 204 L734 228" stroke="#475569" stroke-dasharray="4 3" marker-end="url(#a)"/>
+    <text x="740" y="220" font-size="10.5" fill="#64748b">on failure</text>
+    <path d="M826 160 L848 160" stroke="#047857" marker-end="url(#ag)"/>
+    <path d="M826 265 L848 265" stroke="#475569" marker-end="url(#a)"/>
+
+    <path d="M392 452 L420 452" stroke="#1e3a5f" marker-end="url(#an)"/>
+    <path d="M610 440 L638 430" stroke="#1e3a5f" marker-end="url(#an)"/>
+    <path d="M734 470 L734 480" stroke="#1e3a5f" marker-end="url(#an)"/>
+    <path d="M826 526 L848 500" stroke="#1e3a5f" marker-end="url(#an)"/>
+
+    <path d="M1024 208 L1060 260" stroke="#E8472A" stroke-width="2" marker-end="url(#a)"/>
+    <path d="M1024 476 L1060 400" stroke="#E8472A" stroke-width="2" marker-end="url(#a)"/>
+  </g>
+</svg>

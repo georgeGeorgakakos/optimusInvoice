@@ -1,0 +1,234 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 760" width="1280" height="760" font-family="'Segoe UI', -apple-system, 'Helvetica Neue', Arial, sans-serif">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="ahc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#E8472A"/>
+    </marker>
+    <filter id="sh" x="-5%" y="-5%" width="110%" height="115%">
+      <feDropShadow dx="0" dy="1.5" stdDeviation="2" flood-color="#0f1629" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+
+  <!-- background -->
+  <rect x="0" y="0" width="1280" height="760" rx="14" fill="#f8fafc"/>
+
+  <!-- header -->
+  <rect x="0" y="0" width="1280" height="64" rx="14" fill="#0f1629"/>
+  <rect x="0" y="40" width="1280" height="24" fill="#0f1629"/>
+  <text x="28" y="30" font-size="20" font-weight="700" fill="#ffffff">OptimusInvoice — runtime architecture</text>
+  <text x="28" y="51" font-size="12.5" fill="#cbd5e1">9 containers on the <tspan font-family="Consolas, Menlo, monospace">optimus_ai_net</tspan> network · CPU-first, offline models in ./model_cache · docker-compose.yml (Oct 2026)</text>
+  <rect x="1104" y="18" width="150" height="28" rx="14" fill="#E8472A"/>
+  <text x="1179" y="37" font-size="12.5" font-weight="700" fill="#fff" text-anchor="middle">Optimus Research</text>
+
+  <!-- ============ LEFT: users + external systems ============ -->
+  <text x="24" y="92" font-size="11" font-weight="700" fill="#64748b" letter-spacing="1">USERS</text>
+  <rect x="24" y="100" width="232" height="96" rx="10" fill="#ffffff" stroke="#cbd5e1" filter="url(#sh)"/>
+  <text x="40" y="126" font-size="14" font-weight="700" fill="#0f1629">Browser / Electron app</text>
+  <text x="40" y="146" font-size="12" fill="#475569">React 19 SPA · 13 pages</text>
+  <text x="40" y="164" font-size="12" fill="#475569">Upload · Queue · Review · Approve</text>
+  <text x="40" y="182" font-size="12" fill="#475569">Windows .exe / .dmg / AppImage</text>
+
+  <text x="24" y="242" font-size="11" font-weight="700" fill="#64748b" letter-spacing="1">EXTERNAL SYSTEMS</text>
+  <rect x="24" y="250" width="232" height="62" rx="10" fill="#ffffff" stroke="#cbd5e1" filter="url(#sh)"/>
+  <text x="40" y="275" font-size="13.5" font-weight="700" fill="#0f1629">SoftOne ERP</text>
+  <text x="40" y="295" font-size="11.5" fill="#475569">login · products · suppliers · SetData</text>
+
+  <rect x="24" y="324" width="232" height="62" rx="10" fill="#ffffff" stroke="#cbd5e1" filter="url(#sh)"/>
+  <text x="40" y="349" font-size="13.5" font-weight="700" fill="#0f1629">ΓΕΜΗ Business Portal API</text>
+  <text x="40" y="369" font-size="11.5" fill="#475569">ΑΦΜ lookup → client profile draft</text>
+
+  <rect x="24" y="398" width="232" height="62" rx="10" fill="#ffffff" stroke="#cbd5e1" filter="url(#sh)"/>
+  <text x="40" y="423" font-size="13.5" font-weight="700" fill="#0f1629">OptimusDB catalog</text>
+  <text x="40" y="443" font-size="11.5" fill="#475569">non-blocking metadata push</text>
+
+  <rect x="24" y="472" width="232" height="62" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-dasharray="4 3"/>
+  <text x="40" y="497" font-size="13.5" font-weight="700" fill="#0f1629">SAP B1 · Dynamics · Custom</text>
+  <text x="40" y="517" font-size="11.5" fill="#475569">config UI only (no connector yet)</text>
+
+  <!-- ============ MIDDLE: app + mysql ============ -->
+  <text x="296" y="92" font-size="11" font-weight="700" fill="#64748b" letter-spacing="1">APPLICATION</text>
+  <rect x="296" y="100" width="320" height="398" rx="12" fill="#ffffff" stroke="#0f1629" stroke-width="1.6" filter="url(#sh)"/>
+  <rect x="296" y="100" width="320" height="44" rx="12" fill="#0f1629"/>
+  <rect x="296" y="128" width="320" height="16" fill="#0f1629"/>
+  <text x="312" y="128" font-size="15" font-weight="700" fill="#fff">optimus-app</text>
+  <text x="600" y="128" font-size="12.5" fill="#cbd5e1" text-anchor="end" font-family="Consolas, Menlo, monospace">:3000</text>
+
+  <g font-size="12">
+    <rect x="312" y="156" width="288" height="46" rx="8" fill="#eef2ff" stroke="#c7d2fe"/>
+    <text x="324" y="175" font-weight="700" fill="#1e1b4b">Express + tRPC 11 API</text>
+    <text x="324" y="193" fill="#475569">15 routers · ~100 procedures · OAuth/JWT</text>
+
+    <rect x="312" y="210" width="288" height="46" rx="8" fill="#fff1ee" stroke="#fbc4b8"/>
+    <text x="324" y="229" font-weight="700" fill="#9a2a14">Queue worker  (queueWorker.ts)</text>
+    <text x="324" y="247" fill="#475569">SKIP LOCKED claims · retries · warm-up defer</text>
+
+    <rect x="312" y="264" width="288" height="46" rx="8" fill="#fff1ee" stroke="#fbc4b8"/>
+    <text x="324" y="283" font-weight="700" fill="#9a2a14">invoiceProcessor.ts</text>
+    <text x="324" y="301" fill="#475569">extract → classify → line items → match</text>
+
+    <rect x="312" y="318" width="288" height="46" rx="8" fill="#ecfdf5" stroke="#a7f3d0"/>
+    <text x="324" y="337" font-weight="700" fill="#065f46">Python ML (child processes)</text>
+    <text x="324" y="355" fill="#475569">ml_product_matcher_v2 · rule_learning_engine</text>
+
+    <rect x="312" y="372" width="288" height="46" rx="8" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <text x="324" y="391" font-weight="700" fill="#0f1629">extractionExporter.ts</text>
+    <text x="324" y="409" fill="#475569">atomic JSON → extractions/date/client/</text>
+
+    <rect x="312" y="426" width="288" height="56" rx="8" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <text x="324" y="445" font-weight="700" fill="#0f1629">Client profile + approvals</text>
+    <text x="324" y="463" fill="#475569">active.json hot-reload · duplicate auto-reject</text>
+    <text x="324" y="478" fill="#475569">notifications · CSV/XLSX export</text>
+  </g>
+
+  <!-- mysql -->
+  <rect x="296" y="526" width="320" height="64" rx="12" fill="#ffffff" stroke="#334155" stroke-width="1.4" filter="url(#sh)"/>
+  <path d="M316 544 q14 -8 28 0 v28 q-14 8 -28 0 z" fill="#334155"/>
+  <ellipse cx="330" cy="544" rx="14" ry="5" fill="#64748b"/>
+  <text x="356" y="552" font-size="14" font-weight="700" fill="#0f1629">optimus-mysql  <tspan font-weight="400" font-size="12.5" fill="#64748b" font-family="Consolas, Menlo, monospace">:3306</tspan></text>
+  <text x="356" y="572" font-size="12" fill="#475569">MySQL 8 · Drizzle · also the job queue</text>
+
+  <!-- volumes -->
+  <g font-size="11" font-family="Consolas, Menlo, monospace">
+    <rect x="296" y="604" width="98" height="24" rx="6" fill="#e2e8f0"/>
+    <text x="345" y="620" text-anchor="middle" fill="#334155">uploads/</text>
+    <rect x="402" y="604" width="104" height="24" rx="6" fill="#e2e8f0"/>
+    <text x="454" y="620" text-anchor="middle" fill="#334155">extractions/</text>
+    <rect x="514" y="604" width="102" height="24" rx="6" fill="#e2e8f0"/>
+    <text x="565" y="620" text-anchor="middle" fill="#334155">profiles/</text>
+  </g>
+
+  <!-- ============ VLM SERVICE ============ -->
+  <text x="652" y="92" font-size="11" font-weight="700" fill="#64748b" letter-spacing="1">EXTRACTION DISPATCHER</text>
+  <rect x="652" y="100" width="290" height="490" rx="12" fill="#ffffff" stroke="#E8472A" stroke-width="1.8" filter="url(#sh)"/>
+  <rect x="652" y="100" width="290" height="44" rx="12" fill="#E8472A"/>
+  <rect x="652" y="128" width="290" height="16" fill="#E8472A"/>
+  <text x="668" y="128" font-size="15" font-weight="700" fill="#fff">vlm-service</text>
+  <text x="926" y="128" font-size="12" fill="#ffe4dc" text-anchor="end" font-family="Consolas, Menlo, monospace">:8100 → host 8300</text>
+
+  <g font-size="12">
+    <rect x="668" y="156" width="258" height="46" rx="8" fill="#fff1ee" stroke="#fbc4b8"/>
+    <text x="680" y="175" font-weight="700" fill="#9a2a14">POST /extract-pdf  (engine=…)</text>
+    <text x="680" y="193" fill="#475569">routes · proxies · semaphore-serialised</text>
+
+    <rect x="668" y="210" width="258" height="40" rx="8" fill="#ecfdf5" stroke="#a7f3d0"/>
+    <text x="680" y="235" font-weight="700" fill="#065f46">pdfplumber pre-flight <tspan font-weight="400" fill="#475569">· digital PDFs</tspan></text>
+
+    <rect x="668" y="258" width="258" height="46" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+    <text x="680" y="277" font-weight="700" fill="#1e3a8a">Surya OCR 0.6.13</text>
+    <text x="680" y="295" fill="#475569">det3 + rec2 · el,en · transformers 4.46.3</text>
+
+    <rect x="668" y="312" width="258" height="46" rx="8" fill="#f5f3ff" stroke="#ddd6fe"/>
+    <text x="680" y="331" font-weight="700" fill="#4c1d95">Semantic LLM — Qwen2.5-3B Q4_K_M</text>
+    <text x="680" y="349" fill="#475569">llama-cpp · text / Markdown → JSON</text>
+
+    <rect x="668" y="366" width="258" height="40" rx="8" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <text x="680" y="391" font-weight="700" fill="#0f1629">Regex parser <tspan font-weight="400" fill="#475569">· fallback, 8 formats</tspan></text>
+
+    <rect x="668" y="414" width="258" height="64" rx="8" fill="#fefce8" stroke="#fde68a"/>
+    <text x="680" y="433" font-weight="700" fill="#713f12">Quality layer</text>
+    <text x="680" y="451" fill="#475569">vision_validator · client_profile</text>
+    <text x="680" y="468" fill="#475569">mydata_fields · dispatch_fields</text>
+
+    <rect x="668" y="486" width="258" height="88" rx="8" fill="#ffffff" stroke="#e2e8f0" stroke-dasharray="4 3"/>
+    <text x="680" y="505" font-weight="700" fill="#64748b">Legacy / disabled in UI</text>
+    <text x="680" y="523" fill="#94a3b8">got_ocr2 · marker · olmocr · qwen_vl</text>
+    <text x="680" y="541" fill="#94a3b8">(dep. conflicts / need vLLM + GPU)</text>
+    <text x="680" y="559" fill="#94a3b8">Escalation off: VLM_ESCALATION=0</text>
+  </g>
+
+  <!-- ============ SIDECARS ============ -->
+  <text x="984" y="92" font-size="11" font-weight="700" fill="#64748b" letter-spacing="1">MODEL SIDECARS</text>
+
+  <g font-size="11.5">
+    <!-- qwen-vl -->
+    <rect x="984" y="100" width="272" height="72" rx="10" fill="#ffffff" stroke="#1e3a5f" filter="url(#sh)"/>
+    <text x="998" y="121" font-size="13" font-weight="700" fill="#1e3a5f">qwen-vl</text>
+    <text x="1242" y="121" font-size="11.5" fill="#64748b" text-anchor="end" font-family="Consolas, Menlo, monospace">:8400</text>
+    <text x="998" y="140" fill="#334155">Qwen2.5-VL-3B · transformers fp32</text>
+    <text x="998" y="158" fill="#64748b">qwen_vl_local</text>
+    <rect x="1196" y="146" width="48" height="18" rx="9" fill="#1e3a5f"/><text x="1220" y="159" font-size="10.5" font-weight="700" fill="#fff" text-anchor="middle">Path B</text>
+
+    <!-- gemma -->
+    <rect x="984" y="180" width="272" height="72" rx="10" fill="#ffffff" stroke="#1e3a5f" filter="url(#sh)"/>
+    <text x="998" y="201" font-size="13" font-weight="700" fill="#1e3a5f">gemma-vl</text>
+    <text x="1242" y="201" font-size="11.5" fill="#64748b" text-anchor="end" font-family="Consolas, Menlo, monospace">:8500</text>
+    <text x="998" y="220" fill="#334155">Gemma 3 4B-it Q4_K_M · llama-cpp-python</text>
+    <text x="998" y="238" fill="#64748b">gemma_vl_local</text>
+    <rect x="1196" y="226" width="48" height="18" rx="9" fill="#1e3a5f"/><text x="1220" y="239" font-size="10.5" font-weight="700" fill="#fff" text-anchor="middle">Path B</text>
+
+    <!-- qwen3vl -->
+    <rect x="984" y="260" width="272" height="72" rx="10" fill="#ffffff" stroke="#1e3a5f" filter="url(#sh)"/>
+    <text x="998" y="281" font-size="13" font-weight="700" fill="#1e3a5f">qwen3vl</text>
+    <text x="1242" y="281" font-size="11.5" fill="#64748b" text-anchor="end" font-family="Consolas, Menlo, monospace">:8600</text>
+    <text x="998" y="300" fill="#334155">Qwen3-VL-8B Q4_K_M · llama-server b6907</text>
+    <text x="998" y="318" fill="#64748b">qwen3vl_local</text>
+    <rect x="1196" y="306" width="48" height="18" rx="9" fill="#1e3a5f"/><text x="1220" y="319" font-size="10.5" font-weight="700" fill="#fff" text-anchor="middle">Path B</text>
+
+    <!-- qwen35 -->
+    <rect x="984" y="340" width="272" height="72" rx="10" fill="#ffffff" stroke="#1e3a5f" stroke-width="1.8" filter="url(#sh)"/>
+    <text x="998" y="361" font-size="13" font-weight="700" fill="#1e3a5f">qwen35</text>
+    <text x="1242" y="361" font-size="11.5" fill="#64748b" text-anchor="end" font-family="Consolas, Menlo, monospace">:8800</text>
+    <text x="998" y="380" fill="#334155">Qwen3.5-4B Q4_K_M · llama-server b9828</text>
+    <text x="998" y="398" fill="#64748b">qwen35_local · KIE LLM</text>
+    <rect x="1196" y="386" width="48" height="18" rx="9" fill="#1e3a5f"/><text x="1220" y="399" font-size="10.5" font-weight="700" fill="#fff" text-anchor="middle">Path B</text>
+
+    <!-- mineru -->
+    <rect x="984" y="420" width="272" height="72" rx="10" fill="#ffffff" stroke="#047857" filter="url(#sh)"/>
+    <text x="998" y="441" font-size="13" font-weight="700" fill="#047857">mineru-service</text>
+    <text x="1242" y="441" font-size="11.5" fill="#64748b" text-anchor="end" font-family="Consolas, Menlo, monospace">:8700</text>
+    <text x="998" y="460" fill="#334155">MinerU pipeline (CPU) → Markdown</text>
+    <text x="998" y="478" fill="#64748b">mineru · auto for scans</text>
+    <rect x="1196" y="466" width="48" height="18" rx="9" fill="#047857"/><text x="1220" y="479" font-size="10.5" font-weight="700" fill="#fff" text-anchor="middle">Path A</text>
+
+    <!-- paddle -->
+    <rect x="984" y="500" width="272" height="72" rx="10" fill="#ffffff" stroke="#047857" filter="url(#sh)"/>
+    <text x="998" y="521" font-size="13" font-weight="700" fill="#047857">paddle-ocr</text>
+    <text x="1242" y="521" font-size="11.5" fill="#64748b" text-anchor="end" font-family="Consolas, Menlo, monospace">:8900</text>
+    <text x="998" y="540" fill="#334155">PP-StructureV3 (el) + optional KIE</text>
+    <text x="998" y="558" fill="#64748b">paddle_ocr</text>
+    <rect x="1170" y="546" width="74" height="18" rx="9" fill="#047857"/><text x="1207" y="559" font-size="10.5" font-weight="700" fill="#fff" text-anchor="middle">Path A / B</text>
+  </g>
+
+  <!-- ============ ARROWS ============ -->
+  <!-- browser -> app -->
+  <path d="M256 148 L292 148" stroke="#475569" stroke-width="1.6" fill="none" marker-end="url(#ah)"/>
+  <!-- app -> externals -->
+  <path d="M296 300 L262 290" stroke="#475569" stroke-width="1.4" fill="none" marker-end="url(#ah)"/>
+  <path d="M296 330 L262 355" stroke="#475569" stroke-width="1.4" fill="none" marker-end="url(#ah)"/>
+  <path d="M296 360 L262 425" stroke="#475569" stroke-width="1.4" fill="none" marker-end="url(#ah)"/>
+  <!-- app -> mysql -->
+  <path d="M456 498 L456 522" stroke="#475569" stroke-width="1.6" fill="none" marker-end="url(#ah)"/>
+  <!-- app -> vlm -->
+  <path d="M600 287 L648 287" stroke="#E8472A" stroke-width="2" fill="none" marker-end="url(#ahc)"/>
+  <!-- vlm -> sidecar bus -->
+  <path d="M942 180 L962 180 L962 536" stroke="#E8472A" stroke-width="2" fill="none"/>
+  <g stroke="#E8472A" stroke-width="1.6" fill="none" marker-end="url(#ahc)">
+    <path d="M962 136 L980 136"/>
+    <path d="M962 216 L980 216"/>
+    <path d="M962 296 L980 296"/>
+    <path d="M962 376 L980 376"/>
+    <path d="M962 456 L980 456"/>
+    <path d="M962 536 L980 536"/>
+  </g>
+  <path d="M962 136 L962 180" stroke="#E8472A" stroke-width="2" fill="none"/>
+  <!-- paddle KIE -> qwen35 -->
+  <path d="M1256 536 C1276 520 1276 392 1260 380" stroke="#7c3aed" stroke-width="1.6" stroke-dasharray="5 3" fill="none" marker-end="url(#ah)"/>
+  <text x="1266" y="466" font-size="10.5" fill="#7c3aed" font-weight="700" transform="rotate(90 1268 470)">KIE</text>
+
+  <!-- ============ LEGEND / FOOTER ============ -->
+  <rect x="24" y="650" width="1232" height="92" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+  <g font-size="12">
+    <rect x="44" y="670" width="48" height="18" rx="9" fill="#047857"/><text x="68" y="683" font-size="10.5" font-weight="700" fill="#fff" text-anchor="middle">Path A</text>
+    <text x="102" y="683" fill="#334155"><tspan font-weight="700">Reader</tspan> → Markdown/text → local semantic LLM → JSON (same post-processing as text PDFs)</text>
+    <rect x="44" y="698" width="48" height="18" rx="9" fill="#1e3a5f"/><text x="68" y="711" font-size="10.5" font-weight="700" fill="#fff" text-anchor="middle">Path B</text>
+    <text x="102" y="711" fill="#334155"><tspan font-weight="700">Vision model</tspan> → JSON directly → vision_postprocess + vision_validator (flag, never fix)</text>
+    <text x="102" y="732" fill="#64748b">Every sidecar lives in its own container because their torch / transformers / llama.cpp versions cannot share one Python environment.</text>
+
+    <path d="M830 679 L870 679" stroke="#E8472A" stroke-width="2" marker-end="url(#ahc)"/><text x="880" y="683" fill="#334155">HTTP to the extraction stack</text>
+    <path d="M830 707 L870 707" stroke="#475569" stroke-width="1.6" marker-end="url(#ah)"/><text x="880" y="711" fill="#334155">tRPC / SQL / REST</text>
+    <path d="M1050 679 L1090 679" stroke="#7c3aed" stroke-width="1.6" stroke-dasharray="5 3" marker-end="url(#ah)"/><text x="1100" y="683" fill="#334155">LLM reuse</text>
+    <rect x="1050" y="698" width="40" height="18" rx="5" fill="#ffffff" stroke="#cbd5e1" stroke-dasharray="4 3"/><text x="1100" y="711" fill="#334155">planned</text>
+  </g>
+</svg>
