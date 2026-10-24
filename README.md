@@ -135,26 +135,26 @@ Start here, then go deeper in the specialised docs. *Status* says how far each o
 
 ```mermaid
 flowchart LR
-    R["README.md<br/>(you are here)"]:::main
-    R --> A["Architecture &amp; models"]
+    R["README.md - you are here"]
+    R --> A["Architecture and models"]
     R --> P["Pipeline internals"]
-    R --> O["Build &amp; ops"]
-    R --> F["Roadmap &amp; R&amp;D"]
-    A --> A1[architecture.md]
-    A --> A2[VLM AI Extraction Stack]
-    A --> A3[MODEL_VERSIONS]
-    A --> A4[GEMMA_BACKENDS]
-    A --> A5[WHY_LLAMA_CPP]
-    A --> A6[VLM_ARCHITECTURE]
-    P --> P1[Document handling]
-    P --> P2[BACKEND_PIPELINE]
-    P --> P3[Line-item geometry]
-    P --> P4[Technical doc]
-    O --> O1[BUILD_OUTPUT]
-    O --> O2[vlm-service/CommandHowTo.txt]
-    F --> F1[BACKEND_FEATURE_SPECS]
-    F --> F2[vLMBenchmark/README]
-    classDef main fill:#E8472A,color:#fff,stroke:#E8472A
+    R --> O["Build and ops"]
+    R --> F["Roadmap and research"]
+    A --> A1["architecture.md"]
+    A --> A2["VLM AI Extraction Stack"]
+    A --> A3["MODEL_VERSIONS"]
+    A --> A4["GEMMA_BACKENDS"]
+    A --> A5["WHY_LLAMA_CPP"]
+    A --> A6["VLM_ARCHITECTURE"]
+    P --> P1["Document handling"]
+    P --> P2["BACKEND_PIPELINE"]
+    P --> P3["Line-item geometry"]
+    P --> P4["Technical doc"]
+    O --> O1["BUILD_OUTPUT"]
+    O --> O2["CommandHowTo.txt"]
+    F --> F1["BACKEND_FEATURE_SPECS"]
+    F --> F2["vLMBenchmark README"]
+    style R fill:#E8472A,color:#fff,stroke:#E8472A
 ```
 
 | Document | What it covers | Status |
@@ -233,23 +233,29 @@ Selected under **Configuration → VLM / AI Extraction Engines**. The choice is 
 
 ```mermaid
 flowchart TD
-    IN([PDF + engine + use_native_text]) --> E{engine}
-    E -->|auto / surya| PP{pdfplumber<br/>&gt; 50 chars?}
-    PP -->|yes| NT[native text]
-    PP -->|no| MH{MinerU<br/>healthy?}
-    MH -->|yes| MU[MinerU Markdown]
-    MH -->|no| SU[Surya OCR · 200 DPI]
-    MU -.->|empty| SU
-    E -->|mineru| MU
-    E -->|paddle_ocr| PD{KIE on?}
-    PD -->|no| PM[PP-StructureV3 Markdown]
-    PD -->|yes| VJ
-    NT & MU & SU & PM --> SEM[Semantic LLM<br/>Qwen2.5-3B]
-    SEM -.->|load timeout / error| RX[Regex parser]
-    SEM & RX --> TXT[_normalize_number · VAT guard · totals<br/>client_profile · myDATA · dispatch]
-    E -->|qwen_vl / gemma / qwen3vl / qwen35| VJ[Vision model → JSON]
-    VJ --> VP[vision_postprocess] --> VV[vision_validator<br/>flag, never fix]
-    TXT & VV --> OUT([response → Node])
+    IN(["PDF + engine + use_native_text"]) --> E{"engine"}
+    E -->|"auto / surya"| PP{"pdfplumber finds<br/>more than 50 chars?"}
+    PP -->|"yes"| NT["native text"]
+    PP -->|"no"| MH{"MinerU<br/>healthy?"}
+    MH -->|"yes"| MU["MinerU Markdown"]
+    MH -->|"no"| SU["Surya OCR at 200 DPI"]
+    MU -.->|"empty"| SU
+    E -->|"mineru"| MU
+    E -->|"paddle_ocr"| PD{"KIE on?"}
+    PD -->|"no"| PM["PP-StructureV3 Markdown"]
+    PD -->|"yes"| VJ
+    NT --> SEM["Semantic LLM<br/>Qwen2.5-3B"]
+    MU --> SEM
+    SU --> SEM
+    PM --> SEM
+    SEM -.->|"load timeout or error"| RX["Regex parser"]
+    SEM --> TXT["number repair, VAT guard, totals<br/>client_profile, myDATA, dispatch"]
+    RX --> TXT
+    E -->|"qwen_vl / gemma / qwen3vl / qwen35"| VJ["Vision model to JSON"]
+    VJ --> VP["vision_postprocess"]
+    VP --> VV["vision_validator<br/>flag, never fix"]
+    TXT --> OUT(["response to Node"])
+    VV --> OUT
     style SEM fill:#7c3aed,color:#fff
     style VJ fill:#1e3a5f,color:#fff
     style OUT fill:#E8472A,color:#fff
@@ -309,7 +315,7 @@ stateDiagram-v2
     pending --> queued: process / batchEnqueue
     queued --> processing: worker claims
     processing --> queued: VLM warming up (no penalty)
-    processing --> queued: error, retry < WORKER_MAX_RETRIES
+    processing --> queued: error, retries left
     processing --> failed: retries exhausted
     processing --> review_needed: invoice / credit note extracted
     processing --> review_needed: cheque / unknown document
